@@ -1,0 +1,108 @@
+# Copyright 2014 The Chromium Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/config/ui.gni")
+import("//ui/views/features.gni")
+
+assert(toolkit_views)
+
+component("views") {
+  output_name = "browser_ui_views"
+  sources = [
+    "chrome_views_export.h",
+    "chrome_widget_sublevel.h",
+    "event_utils.cc",
+    "event_utils.h",
+    "tab_icon_view_model.h",
+    "tab_search_bubble_host_observer.h",
+    "tabs/shared/tab_strip_observer.cc",
+    "tabs/shared/tab_strip_observer.h",
+    "tabs/shared/tab_strip_types.h",
+  ]
+
+  configs += [ "//build/config/compiler:wexit_time_destructors" ]
+
+  defines = [ "CHROME_VIEWS_IMPLEMENTATION" ]
+
+  public_deps = [ "//chrome/browser:browser_public_dependencies" ]
+
+  deps = [
+    "//base",
+    "//build:branding_buildflags",
+    "//chrome/app:command_ids",
+    "//chrome/app:generated_resources",
+    "//chrome/browser/ui:layout_constants",
+    "//components/keep_alive_registry",
+    "//components/lens",
+    "//components/lens:buildflags",
+    "//components/vector_icons",
+    "//content/public/browser",
+    "//printing/buildflags",
+    "//services/screen_ai/buildflags",
+    "//skia",
+    "//ui/base",
+    "//ui/events",
+    "//ui/gfx",
+    "//ui/gfx/geometry",
+    "//ui/views",
+    "//url",
+  ]
+
+  if (is_chromeos) {
+    deps += [
+      "//ash",
+      "//chromeos/ash/experiences/arc",
+      "//chromeos/ash/experiences/arc/intent_helper",
+    ]
+  }
+}
+
+source_set("layout_provider") {
+  sources = [
+    "chrome_layout_provider.h",
+    "chrome_typography.h",
+    "chrome_typography_provider.h",
+  ]
+
+  public_deps = [
+    "//ui/color:color_headers",
+    "//ui/gfx/geometry",
+    "//ui/views",
+  ]
+}
+
+# This thin target is split because of the following circular inclusion:
+# //c/b/ui/views:layout_provider ->
+# //c/b/ui/views/location_bar:location_bar ->
+# //c/b/lens/region_search:region_search ->
+# //c/b/ui/views:layout_provider
+#
+source_set("layout_provider_impl") {
+  sources = [
+    "chrome_layout_provider.cc",
+    "chrome_typography.cc",
+    "chrome_typography_provider.cc",
+  ]
+
+  deps = [
+    ":layout_provider",
+    "//chrome/browser/ui:ui_features",
+    "//chrome/browser/ui/color:color_headers",
+    "//chrome/browser/ui/views/location_bar",
+    "//components/omnibox/browser",
+    "//components/omnibox/common",
+  ]
+}
+
+source_set("file_system_access_test_support") {
+  testonly = true
+  sources = [
+    "file_system_access/file_system_access_test_utils.cc",
+    "file_system_access/file_system_access_test_utils.h",
+  ]
+  deps = [
+    "//ui/shell_dialogs",
+    "//url",
+  ]
+}

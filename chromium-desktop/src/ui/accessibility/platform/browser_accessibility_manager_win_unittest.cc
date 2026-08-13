@@ -1,0 +1,279 @@
+// Copyright 2019 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "ui/accessibility/platform/browser_accessibility_manager.h"
+
+#include "base/memory/raw_ptr.h"
+#include "base/test/task_environment.h"
+#include "testing/gtest/include/gtest/gtest.h"
+#include "ui/accessibility/platform/ax_fragment_root_delegate_win.h"
+#include "ui/accessibility/platform/ax_fragment_root_win.h"
+#include "ui/accessibility/platform/ax_platform_node_win.h"
+#include "ui/accessibility/platform/browser_accessibility.h"
+#include "ui/accessibility/platform/browser_accessibility_manager_win.h"
+#include "ui/accessibility/platform/test_ax_node_id_delegate.h"
+#include "ui/accessibility/platform/test_ax_node_wrapper.h"
+#include "ui/accessibility/platform/test_ax_platform_tree_manager_delegate.h"
+
+namespace {
+
+class TestFragmentRootDelegate : public ui::AXFragmentRootDelegateWin {
+ public:
+  TestFragmentRootDelegate(
+      ui::BrowserAccessibilityManager* browser_accessibility_manager)
+      : browser_accessibility_manager_(browser_accessibility_manager) {}
+
+  gfx::NativeViewAccessible GetChildOfAXFragmentRoot() override {
+    return browser_accessibility_manager_->GetBrowserAccessibilityRoot()
+        ->GetNativeViewAccessible();
+  }
+
+  gfx::NativeViewAccessible GetParentOfAXFragmentRoot() override {
+    return nullptr;
+  }
+
+  bool IsAXFragmentRootAControlElement() override { return true; }
+
+  raw_ptr<ui::BrowserAccessibilityManager> browser_accessibility_manager_;
+};
+}  // namespace
+
+namespace ui {
+
+class BrowserAccessibilityManagerWinTest : public testing::Test {
+ public:
+  BrowserAccessibilityManagerWinTest() = default;
+
+  BrowserAccessibilityManagerWinTest(
+      const BrowserAccessibilityManagerWinTest&) = delete;
+  BrowserAccessibilityManagerWinTest& operator=(
+      const BrowserAccessibilityManagerWinTest&) = delete;
+
+  ~BrowserAccessibilityManagerWinTest() override = default;
+
+ protected:
+  std::unique_ptr<TestAXPlatformTreeManagerDelegate>
+      test_browser_accessibility_delegate_;
+  TestAXNodeIdDelegate node_id_delegate_;
+
+ private:
+  void SetUp() override;
+
+  // This is needed to prevent a DCHECK failure when OnAccessibilityApiUsage
+  // is called in BrowserAccessibility::GetRole.
+  base::test::SingleThreadTaskEnvironment task_environment_;
+};
+
+void BrowserAccessibilityManagerWinTest::SetUp() {
+  test_browser_accessibility_delegate_ =
+      std::make_unique<TestAXPlatformTreeManagerDelegate>();
+}
+
+TEST_F(BrowserAccessibilityManagerWinTest, DynamicallyAddedIFrame) {
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kRootWebArea;
+
+  test_browser_accessibility_delegate_->accelerated_widget_ =
+      gfx::kMockAcceleratedWidget;
+
+  std::unique_ptr<BrowserAccessibilityManager> root_manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root), node_id_delegate_,
+          test_browser_accessibility_delegate_.get()));
+
+  TestFragmentRootDelegate test_fragment_root_delegate(root_manager.get());
+
+  AXPlatformNode* root_document_root_node =
+      AXPlatformNode::FromNativeViewAccessible(
+          root_manager->GetBrowserAccessibilityRoot()
+              ->GetNativeViewAccessible());
+
+  std::unique_ptr<AXPlatformNodeDelegate> fragment_root =
+      std::make_unique<AXFragmentRootWin>(gfx::kMockAcceleratedWidget,
+                                          &test_fragment_root_delegate);
+
+  EXPECT_EQ(fragment_root->GetChildCount(), 1u);
+  EXPECT_EQ(fragment_root->ChildAtIndex(0),
+            root_document_root_node->GetNativeViewAccessible());
+
+  // Simulate the case where an iframe is created but the update to add the
+  // element to the root frame's document has not yet come through.
+  std::unique_ptr<TestAXPlatformTreeManagerDelegate> iframe_delegate =
+      std::make_unique<TestAXPlatformTreeManagerDelegate>();
+  iframe_delegate->is_root_frame_ = false;
+  iframe_delegate->accelerated_widget_ = gfx::kMockAcceleratedWidget;
+
+  std::unique_ptr<BrowserAccessibilityManager> iframe_manager(
+      BrowserAccessibilityManager::Create(MakeAXTreeUpdateForTesting(root),
+                                          node_id_delegate_,
+                                          iframe_delegate.get()));
+
+  // The new frame is not a root frame, so the fragment root's lone child should
+  // still be the same as before.
+  EXPECT_EQ(fragment_root->GetChildCount(), 1u);
+  EXPECT_EQ(fragment_root->ChildAtIndex(0),
+            root_document_root_node->GetNativeViewAccessible());
+}
+
+TEST_F(BrowserAccessibilityManagerWinTest, ChildTree) {
+  AXNodeData child_tree_root;
+  child_tree_root.id = 1;
+  child_tree_root.role = ax::mojom::Role::kRootWebArea;
+  AXTreeUpdate child_tree_update = MakeAXTreeUpdateForTesting(child_tree_root);
+
+  AXNodeData parent_tree_root;
+  parent_tree_root.id = 1;
+  parent_tree_root.role = ax::mojom::Role::kRootWebArea;
+  parent_tree_root.AddChildTreeId(child_tree_update.tree_data.tree_id);
+  AXTreeUpdate parent_tree_update =
+      MakeAXTreeUpdateForTesting(parent_tree_root);
+
+  child_tree_update.tree_data.parent_tree_id =
+      parent_tree_update.tree_data.tree_id;
+
+  test_browser_accessibility_delegate_->accelerated_widget_ =
+      gfx::kMockAcceleratedWidget;
+
+  std::unique_ptr<BrowserAccessibilityManager> parent_manager(
+      BrowserAccessibilityManager::Create(
+          parent_tree_update, node_id_delegate_,
+          test_browser_accessibility_delegate_.get()));
+
+  TestFragmentRootDelegate test_fragment_root_delegate(parent_manager.get());
+
+  AXPlatformNode* root_document_root_node =
+      AXPlatformNode::FromNativeViewAccessible(
+          parent_manager->GetBrowserAccessibilityRoot()
+              ->GetNativeViewAccessible());
+
+  std::unique_ptr<AXPlatformNodeDelegate> fragment_root =
+      std::make_unique<AXFragmentRootWin>(gfx::kMockAcceleratedWidget,
+                                          &test_fragment_root_delegate);
+
+  EXPECT_EQ(fragment_root->GetChildCount(), 1u);
+  EXPECT_EQ(fragment_root->ChildAtIndex(0),
+            root_document_root_node->GetNativeViewAccessible());
+
+  // Add the child tree.
+  std::unique_ptr<TestAXPlatformTreeManagerDelegate> child_tree_delegate =
+      std::make_unique<TestAXPlatformTreeManagerDelegate>();
+  child_tree_delegate->is_root_frame_ = false;
+  child_tree_delegate->accelerated_widget_ = gfx::kMockAcceleratedWidget;
+  std::unique_ptr<BrowserAccessibilityManager> child_manager(
+      BrowserAccessibilityManager::Create(child_tree_update, node_id_delegate_,
+                                          child_tree_delegate.get()));
+
+  // The fragment root's lone child should still be the same as before.
+  EXPECT_EQ(fragment_root->GetChildCount(), 1u);
+  EXPECT_EQ(fragment_root->ChildAtIndex(0),
+            root_document_root_node->GetNativeViewAccessible());
+}
+
+// Verifies that FireAriaNotificationEvent bypasses the UIA event listener
+// optimization when the source is not web content (e.g., Views). UIA only
+// calls AdviseEventAdded on fragment roots it has already discovered, so
+// transient HWNDs like popup menus have empty listener maps that would
+// incorrectly suppress events. See crbug.com/40672441.
+TEST_F(BrowserAccessibilityManagerWinTest,
+       AriaNotificationSkipsListenerCheckForNonWebContent) {
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kRootWebArea;
+
+  test_browser_accessibility_delegate_->accelerated_widget_ =
+      gfx::kMockAcceleratedWidget;
+  test_browser_accessibility_delegate_->is_web_content_source_ = false;
+
+  std::unique_ptr<BrowserAccessibilityManager> manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root), node_id_delegate_,
+          test_browser_accessibility_delegate_.get()));
+
+  TestFragmentRootDelegate test_fragment_root_delegate(manager.get());
+
+  std::unique_ptr<AXPlatformNodeDelegate> fragment_root =
+      std::make_unique<AXFragmentRootWin>(gfx::kMockAcceleratedWidget,
+                                          &test_fragment_root_delegate);
+
+  auto* platform_node = static_cast<AXPlatformNodeWin*>(
+      manager->GetBrowserAccessibilityRoot()->GetAXPlatformNode());
+  ASSERT_FALSE(
+      platform_node->HasEventListenerForEvent(UIA_NotificationEventId));
+
+  manager->FireAriaNotificationEvent(
+      manager->GetBrowserAccessibilityRoot(), "test notification",
+      ax::mojom::AriaNotificationPriority::kNormal,
+      ax::mojom::AriaNotificationInterrupt::kNone, "");
+}
+
+TEST_F(BrowserAccessibilityManagerWinTest,
+       CheckedStateChangedMapsToExposedPattern) {
+  // This test validates that CHECKED_STATE_CHANGED on a menu button
+  // (which exposes ExpandCollapse, not Toggle) must raise
+  // ExpandCollapseState, not ToggleState.
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kRootWebArea;
+
+  // HasPopup=menu exposes ExpandCollapse, not Toggle.
+  AXNodeData menu_button;
+  menu_button.id = 2;
+  menu_button.role = ax::mojom::Role::kButton;
+  menu_button.SetHasPopup(ax::mojom::HasPopup::kMenu);
+
+  // An expandable popup button also exposes ExpandCollapse.
+  AXNodeData popup_button;
+  popup_button.id = 3;
+  popup_button.role = ax::mojom::Role::kPopUpButton;
+  popup_button.AddState(ax::mojom::State::kCollapsed);
+
+  // Genuine toggle/checkable control: raises ToggleState.
+  AXNodeData checkbox;
+  checkbox.id = 4;
+  checkbox.role = ax::mojom::Role::kCheckBox;
+
+  // A toggle button without a popup exposes Toggle, not ExpandCollapse.
+  AXNodeData toggle_button;
+  toggle_button.id = 5;
+  toggle_button.role = ax::mojom::Role::kToggleButton;
+
+  root.child_ids = {menu_button.id, popup_button.id, checkbox.id,
+                    toggle_button.id};
+
+  test_browser_accessibility_delegate_->accelerated_widget_ =
+      gfx::kMockAcceleratedWidget;
+
+  std::unique_ptr<BrowserAccessibilityManager> manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root, menu_button, popup_button, checkbox,
+                                     toggle_button),
+          node_id_delegate_, test_browser_accessibility_delegate_.get()));
+
+  BrowserAccessibility* menu_button_node = manager->GetFromID(menu_button.id);
+  ASSERT_TRUE(menu_button_node);
+  BrowserAccessibility* popup_button_node = manager->GetFromID(popup_button.id);
+  ASSERT_TRUE(popup_button_node);
+  BrowserAccessibility* checkbox_node = manager->GetFromID(checkbox.id);
+  ASSERT_TRUE(checkbox_node);
+  BrowserAccessibility* toggle_button_node =
+      manager->GetFromID(toggle_button.id);
+  ASSERT_TRUE(toggle_button_node);
+
+  EXPECT_EQ(BrowserAccessibilityManagerWin::GetCheckedStateChangedUiaProperty(
+                *menu_button_node),
+            UIA_ExpandCollapseExpandCollapseStatePropertyId);
+  EXPECT_EQ(BrowserAccessibilityManagerWin::GetCheckedStateChangedUiaProperty(
+                *popup_button_node),
+            UIA_ExpandCollapseExpandCollapseStatePropertyId);
+
+  EXPECT_EQ(BrowserAccessibilityManagerWin::GetCheckedStateChangedUiaProperty(
+                *checkbox_node),
+            UIA_ToggleToggleStatePropertyId);
+  EXPECT_EQ(BrowserAccessibilityManagerWin::GetCheckedStateChangedUiaProperty(
+                *toggle_button_node),
+            UIA_ToggleToggleStatePropertyId);
+}
+
+}  // namespace ui

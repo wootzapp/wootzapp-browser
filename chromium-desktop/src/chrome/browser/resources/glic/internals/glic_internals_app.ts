@@ -1,0 +1,578 @@
+// Copyright 2025 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+import '//resources/cr_elements/cr_button/cr_button.js';
+import '//resources/cr_elements/cr_tabs/cr_tabs.js';
+
+import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
+
+import {ActuationEligibility, ActuationTarget, FormFactor, FreOverride, GlicExperimentalTriggeringState, InvocationSource, Platform} from '../glic.mojom-webui.js';
+import {FeatureMode} from '../glic_enums.mojom-webui.js';
+import {FreCompletionWaitMode, InternalsPageHandlerFactory, InternalsPageHandlerRemote} from '../glic_internals.mojom-webui.js';
+import type {InternalsDataPayload, TriggerInvokeFromInternalsOptions} from '../glic_internals.mojom-webui.js';
+
+import {getCss} from './glic_internals_app.css.js';
+import {getHtml} from './glic_internals_app.html.js';
+
+
+export class GlicInternalsAppElement extends CrLitElement {
+  static get is() {
+    return 'glic-internals-app';
+  }
+
+  static override get styles() {
+    return getCss();
+  }
+
+  override render() {
+    return getHtml.bind(this)();
+  }
+
+  static override get properties() {
+    return {
+      data_: {type: Object},
+      invokePrompt_: {type: String},
+      invokeAutoSubmit_: {type: Boolean},
+      invokeFreOverride_: {type: Number},
+      invokeFeatureMode_: {type: Number},
+      invokeInvocationSource_: {type: Number},
+      invokeWaitForPanelOpen_: {type: Boolean},
+      invokeLogs_: {type: Array},
+      invokeSurfaceType_: {type: String},
+      invokeZssOverride_: {type: Boolean},
+      invokeZssAdditionalContent_: {type: String},
+      invokeOpenInForeground_: {type: Boolean},
+      invokeActuationTarget_: {type: Number},
+      actuationTargetEnumValues_: {type: Array},
+      invokeShowPanel_: {type: Boolean},
+      invokePayloadUniversalCartMetadata_: {type: String},
+      invokeFreCompletionWaitMode_: {type: Number},
+      freCompletionWaitModeEnumValues_: {type: Array},
+
+      selectedTabIndex_: {type: Number},
+      invokeNewConversation_: {type: Boolean},
+      tabNames_: {type: Array},
+      featureModeEnumValues_: {type: Array},
+    };
+  }
+
+  protected accessor data_: InternalsDataPayload|undefined;
+  protected accessor invokePrompt_: string = '';
+  protected accessor invokeAutoSubmit_: boolean = true;
+  protected accessor invokeFreOverride_: FreOverride = FreOverride.kUnspecified;
+  protected accessor invokeFeatureMode_: FeatureMode = FeatureMode.kUnspecified;
+  protected accessor invokeInvocationSource_: InvocationSource =
+      InvocationSource.kOsButton;
+  protected accessor invokeWaitForPanelOpen_: boolean = false;
+  protected accessor invokeLogs_: string[] = [];
+  protected accessor invokeSurfaceType_: string = 'default';
+  protected accessor invokeZssOverride_: boolean = false;
+  protected accessor invokeZssAdditionalContent_: string = '';
+  protected accessor invokeOpenInForeground_: boolean = true;
+  protected accessor invokeActuationTarget_: ActuationTarget =
+      ActuationTarget.kAgentDecides;
+  protected accessor invokeShowPanel_: boolean = true;
+  protected accessor invokePayloadUniversalCartMetadata_: string = '';
+  protected accessor invokeFreCompletionWaitMode_: FreCompletionWaitMode =
+      FreCompletionWaitMode.kDefault;
+  protected accessor invokeNewConversation_: boolean = false;
+
+  protected accessor selectedTabIndex_: number = 0;
+  protected accessor tabNames_: string[] = ['General', 'Debug Controls'];
+  protected accessor featureModeEnumValues_:
+      Array<{name: string, value: number}> =
+          Object.entries(FeatureMode)
+              .filter(([key]) => isNaN(Number(key)))
+              .map(([name, value]) => ({name, value: value as number}));
+  protected accessor actuationTargetEnumValues_:
+      Array<{name: string, value: number}> =
+          Object.entries(ActuationTarget)
+              .filter(([key]) => isNaN(Number(key)))
+              .map(([name, value]) => ({name, value: value as number}));
+  protected accessor freCompletionWaitModeEnumValues_:
+      Array<{name: string, value: number}> =
+          Object.entries(FreCompletionWaitMode)
+              .filter(([key]) => isNaN(Number(key)))
+              .map(([name, value]) => ({name, value: value as number}));
+
+
+
+  private pageHandler_ = new InternalsPageHandlerRemote();
+
+  override connectedCallback() {
+    super.connectedCallback();
+    InternalsPageHandlerFactory.getRemote().createInternalsPageHandler(
+        this.pageHandler_.$.bindNewPipeAndPassReceiver());
+
+    this.pageHandler_.getInternalsDataPayload().then(
+        ({internalsData}: {internalsData: InternalsDataPayload}) => {
+          this.data_ = internalsData;
+        });
+  }
+
+  protected onShowErrorAllowedChange(e: Event) {
+    const allowed = (e.target as HTMLInputElement).checked;
+    this.data_!.showErrorAllowed = allowed;
+    this.pageHandler_.setShowErrorAllowed(allowed);
+  }
+
+  protected onExperimentalOptInClick_() {
+    this.pageHandler_.showExperimentalOptIn();
+  }
+
+  protected onAutopushInputChange(e: Event) {
+    this.data_!.config.autopushGuestUrl = (e.target as HTMLInputElement).value;
+  }
+
+  protected onStagingInputChange(e: Event) {
+    this.data_!.config.stagingGuestUrl = (e.target as HTMLInputElement).value;
+  }
+
+  protected onPreprodInputChange(e: Event) {
+    this.data_!.config.preprodGuestUrl = (e.target as HTMLInputElement).value;
+  }
+
+  protected onProdInputChange(e: Event) {
+    this.data_!.config.prodGuestUrl = (e.target as HTMLInputElement).value;
+  }
+
+  protected onSavePresetsClick_() {
+    const errorMsg =
+        this.shadowRoot.querySelector<HTMLDivElement>('#inputErrorMsg');
+
+    try {
+      // Validate the URL. If we don't validate here, IPC will kill this
+      // renderer on invalid URLs.
+      new URL(this.data_!.config.autopushGuestUrl);
+      new URL(this.data_!.config.stagingGuestUrl);
+      new URL(this.data_!.config.preprodGuestUrl);
+      new URL(this.data_!.config.prodGuestUrl);
+    } catch {
+      console.error('Invalid URL: no-op');
+      errorMsg!.classList.remove('hiddenElement');
+      return;
+    }
+    errorMsg!.classList.add('hiddenElement');
+    this.pageHandler_.setGuestUrlPresets(
+        this.data_!.config.autopushGuestUrl, this.data_!.config.stagingGuestUrl,
+        this.data_!.config.preprodGuestUrl, this.data_!.config.prodGuestUrl);
+  }
+
+  protected onWebContinuityInputChange(e: Event) {
+    this.data_!.config.webContinuityOriginatingHostUrl =
+        (e.target as HTMLInputElement).value;
+  }
+
+  protected onSaveWebContinuityPresetClick_() {
+    const errorMsg = this.shadowRoot.querySelector<HTMLDivElement>(
+        '#webContinuityInputErrorMsg');
+    const url = this.data_!.config.webContinuityOriginatingHostUrl;
+
+    // Validate the URL. If we don't validate here, IPC will kill this
+    // renderer on invalid URLs.
+    if (url && URL.parse(url) === null) {
+      console.error('Invalid URL: no-op');
+      errorMsg!.classList.remove('hiddenElement');
+      return;
+    }
+    errorMsg!.classList.add('hiddenElement');
+    this.pageHandler_.setWebContinuityOriginatingHostUrlPreset(url);
+  }
+
+  protected getActuationEligibilityString_(eligibility: ActuationEligibility):
+      string {
+    switch (eligibility) {
+      case ActuationEligibility.kEligible:
+        return 'Eligible';
+      case ActuationEligibility.kMissingAccountCapability:
+        return 'Missing account capability';
+      case ActuationEligibility.kMissingChromeBenefits:
+        return 'Missing Chrome benefits';
+      case ActuationEligibility.kDisabledByPolicy:
+        return 'Disabled by policy';
+      case ActuationEligibility.kPlatformUnsupported:
+        return 'Platform unsupported';
+      case ActuationEligibility.kEnterpriseWithoutManagement:
+        return 'Enterprise account without management. Default pref disabled.';
+      default:
+        return 'unknown';
+    }
+  }
+
+  protected getExperimentalTriggeringStateString_(
+      state: GlicExperimentalTriggeringState): string {
+    return GlicExperimentalTriggeringState[state] || 'Unknown';
+  }
+
+  protected getTableData_(): Array<{label: string, value: boolean}> {
+    if (!this.data_ || !this.data_.enablement) {
+      return [];
+    }
+
+    return [
+      {
+        label: 'Enabled by Chrome Flags',
+        value: this.data_.enablement.featureEnabled,
+      },
+      {
+        label: 'Regular profile',
+        value: this.data_.enablement.isRegularProfile,
+      },
+      {
+        label: 'Pref or flag based rollout (flag or pref) applies',
+        value: this.data_.enablement.isRolledOut,
+      },
+      {
+        label: 'Account exists and has the Gemini in Chrome capability',
+        value: this.data_.enablement.primaryAccountIsCapable,
+      },
+      {
+        label: 'Account exists and is fully signed-in',
+        value: this.data_.enablement.primaryAccountIsFullySignedIn,
+      },
+      {
+        label:
+            'Chrome Enterprise policy allows this feature (or doesn\'t apply)',
+        value: this.data_.enablement.allowedByChromePolicy,
+      },
+      {
+        label: 'Server side admin allows this feature',
+        value: this.data_.enablement.allowedByRemoteAdmin,
+      },
+      {
+        label: 'Server side allows this feature (Not admin policy)',
+        value: this.data_.enablement.allowedByRemoteOther,
+      },
+      {
+        label: 'User did pass the FRE',
+        value: this.data_.enablement.freIsConsented,
+      },
+      {
+        label: 'User accepted actuation consent',
+        value: this.data_.enablement.actuationIsConsented,
+      },
+      {
+        label: 'Passed country filter',
+        value: this.data_.enablement.allowedByCountryFilter,
+      },
+      {
+        label: 'Passed locale filter',
+        value: this.data_.enablement.allowedByLocaleFilter,
+      },
+    ];
+  }
+
+  protected getInvocationSourceOptions_() {
+    return Object.entries(InvocationSource)
+        .filter(([_, value]) => typeof value === 'number')
+        .map(([key, value]) => ({name: key, value: value}));
+  }
+
+  protected onInvokePromptInput_(e: Event) {
+    this.invokePrompt_ = (e.target as HTMLInputElement).value;
+  }
+
+  protected onInvokeAutoSubmitChange_(e: Event) {
+    this.invokeAutoSubmit_ = (e.target as HTMLInputElement).checked;
+  }
+
+  protected onInvokeFreOverrideChange_(e: Event) {
+    this.invokeFreOverride_ = Number((e.target as HTMLSelectElement).value);
+  }
+
+  protected onInvokeFeatureModeChange_(e: Event) {
+    this.invokeFeatureMode_ = Number((e.target as HTMLSelectElement).value);
+  }
+
+  protected onInvokeInvocationSourceChange_(e: Event) {
+    this.invokeInvocationSource_ =
+        Number((e.target as HTMLSelectElement).value);
+  }
+  protected onInvokeWaitForPanelOpenChange_(e: Event) {
+    this.invokeWaitForPanelOpen_ = (e.target as HTMLInputElement).checked;
+  }
+
+  protected onInvokeNewConversationChange_(e: Event) {
+    this.invokeNewConversation_ = (e.target as HTMLInputElement).checked;
+  }
+
+  protected onPayloadUniversalCartMetadataInput_(e: Event) {
+    this.invokePayloadUniversalCartMetadata_ =
+        (e.target as HTMLInputElement).value;
+  }
+
+  protected onInvokeSurfaceTypeChange_(e: Event) {
+    this.invokeSurfaceType_ = (e.target as HTMLSelectElement).value;
+  }
+
+  protected onInvokeZssOverrideChange_(e: Event) {
+    this.invokeZssOverride_ = (e.target as HTMLInputElement).checked;
+  }
+
+  protected onInvokeZssAdditionalContentInput_(e: Event) {
+    this.invokeZssAdditionalContent_ = (e.target as HTMLInputElement).value;
+  }
+
+  protected onInvokeOpenInForegroundChange(e: Event) {
+    this.invokeOpenInForeground_ = (e.target as HTMLInputElement).checked;
+  }
+
+  protected onInvokeActuationTargetChange_(e: Event) {
+    this.invokeActuationTarget_ = Number((e.target as HTMLSelectElement).value);
+  }
+
+  protected onInvokeShowPanelChange_(e: Event) {
+    this.invokeShowPanel_ = (e.target as HTMLInputElement).checked;
+  }
+  protected onInvokeFreCompletionWaitModeChange_(e: Event) {
+    this.invokeFreCompletionWaitMode_ =
+        Number((e.target as HTMLSelectElement).value);
+  }
+  protected onTriggerInvokeClick_() {
+    const surface = this.invokeSurfaceType_ === 'newTab' ?
+        {newTab: {openInForeground: this.invokeOpenInForeground_}} :
+        {defaultSurface: {}};
+
+    let payload = null;
+    if (this.invokeInvocationSource_ === InvocationSource.kUniversalCart) {
+      const bytes = this.invokePayloadUniversalCartMetadata_ ?
+          Array.from(
+              atob(this.invokePayloadUniversalCartMetadata_),
+              c => c.charCodeAt(0)) :
+          [];
+      payload = {
+        universalCart: {
+          serializedMetadata: bytes,
+        },
+      };
+    }
+
+    const options: TriggerInvokeFromInternalsOptions = {
+      invocationSource: this.invokeInvocationSource_,
+      prompts: this.invokePrompt_ ? [this.invokePrompt_] : [],
+      additionalContext: null,
+      conversation: this.invokeNewConversation_ ? {newConversation: {}} :
+                                                  {defaultConversation: {}},
+      featureMode: this.invokeFeatureMode_,
+      disableZss: false,
+      zssConfig: this.invokeZssOverride_ ?
+          {additionalContent: this.invokeZssAdditionalContent_ || null} :
+          null,
+      skillId: null,
+      errorMessage: null,
+      timeout: null,
+      autoSubmit: this.invokeAutoSubmit_,
+      freOverride: this.invokeFreOverride_,
+      waitForPanelOpen: this.invokeWaitForPanelOpen_,
+      freCompletionWaitMode: this.invokeFreCompletionWaitMode_,
+      surface: surface,
+      actuationTarget: this.invokeActuationTarget_,
+      showPanel: this.invokeAutoSubmit_ ? this.invokeShowPanel_ : null,
+      payload: payload,
+    };
+
+    const invocationSourceMap =
+        InvocationSource as unknown as Record<number, string>;
+    const featureModeMap = FeatureMode as unknown as Record<number, string>;
+    const freOverrideMap = FreOverride as unknown as Record<number, string>;
+    const freCompletionWaitModeMap =
+        FreCompletionWaitMode as unknown as Record<number, string>;
+    const actuationTargetMap =
+        ActuationTarget as unknown as Record<number, string>;
+
+    const optionsString = JSON.stringify(options, (key, value) => {
+      if (value === null || value === undefined) {
+        return undefined;
+      }
+      if (Array.isArray(value) && value.length === 0) {
+        return undefined;
+      }
+      if (key === 'conversation') {
+        if (value.defaultConversation &&
+            Object.keys(value.defaultConversation).length === 0) {
+          return undefined;
+        }
+      }
+      if (key === 'surface') {
+        if (value.defaultSurface &&
+            Object.keys(value.defaultSurface).length === 0) {
+          return undefined;
+        }
+      }
+      if (key === 'freOverride' && value === FreOverride.kUnspecified) {
+        return undefined;
+      }
+      if (key === 'featureMode' && value === FeatureMode.kUnspecified) {
+        return undefined;
+      }
+      if (key === 'actuationTarget' &&
+          value === ActuationTarget.kAgentDecides) {
+        return undefined;
+      }
+      if (key === 'disableZss' && value === false) {
+        return undefined;
+      }
+      if (key === 'waitForPanelOpen' && value === false) {
+        return undefined;
+      }
+
+      if (key === 'invocationSource') {
+        return `${value} (${invocationSourceMap[value as number]})`;
+      }
+      if (key === 'featureMode') {
+        return `${value} (${featureModeMap[value as number]})`;
+      }
+      if (key === 'freOverride') {
+        return `${value} (${freOverrideMap[value as number]})`;
+      }
+      if (key === 'freCompletionWaitMode') {
+        return `${value} (${freCompletionWaitModeMap[value as number]})`;
+      }
+      if (key === 'actuationTarget') {
+        return `${value} (${actuationTargetMap[value as number]})`;
+      }
+      return value;
+    }, 2);
+
+    this.invokeLogs_ = [
+      `[${new Date().toLocaleTimeString()}] TRIGGERING INVOKE with options:\n${
+          optionsString}`,
+    ];
+    console.info(this.invokeLogs_[0]);
+
+    this.pageHandler_.triggerInvokeFromInternalsAction(options).then(
+        ({success, errorMessage}: {success: boolean, errorMessage: string}) => {
+          const timestamp = new Date().toLocaleTimeString();
+          const logEntry = `[${timestamp}] ${
+              success ? 'SUCCESS' : 'ERROR: ' + errorMessage}`;
+          this.invokeLogs_ = [...this.invokeLogs_, logEntry];
+          console.info(logEntry);
+        });
+  }
+
+  protected getPlatformString_(platform: Platform): string {
+    switch (platform) {
+      case Platform.kMacOS:
+        return 'macOS';
+      case Platform.kWindows:
+        return 'Windows';
+      case Platform.kLinux:
+        return 'Linux';
+      case Platform.kChromeOS:
+        return 'ChromeOS';
+      case Platform.kAndroid:
+        return 'Android';
+      default:
+        return 'Unknown';
+    }
+  }
+
+  protected getFormFactorString_(formFactor: FormFactor): string {
+    switch (formFactor) {
+      case FormFactor.kDesktop:
+        return 'Desktop';
+      case FormFactor.kPhone:
+        return 'Phone';
+      case FormFactor.kTablet:
+        return 'Tablet';
+      default:
+        return 'Unknown';
+    }
+  }
+
+  protected getDebugSettingsData_():
+      Array<{label: string, value: string|boolean}> {
+    if (!this.data_ || !this.data_.debugInfo) {
+      return [];
+    }
+
+    const debugInfo = this.data_.debugInfo;
+    const settings: Array<{label: string, value: string | boolean}> = [
+      {
+        label: 'GlicActor Feature Flag',
+        value: debugInfo.glicActorFeatureEnabled,
+      },
+      {
+        label: 'GlicRollout Feature Flag',
+        value: debugInfo.glicRolloutFeatureEnabled,
+      },
+      {
+        label: 'GlicTieredRollout Feature Flag',
+        value: debugInfo.glicTieredRolloutFeatureEnabled,
+      },
+      {
+        label: 'GlicTieredRolloutV2 Feature Flag',
+        value: debugInfo.glicTieredRolloutV2FeatureEnabled,
+      },
+      {
+        label: 'Platform',
+        value: this.getPlatformString_(debugInfo.platform),
+      },
+      {
+        label: 'Form Factor',
+        value: this.getFormFactorString_(debugInfo.formFactor),
+      },
+      {
+        label: 'OS Hotkey',
+        value: debugInfo.hotkey || 'None',
+      },
+      {
+        label: 'Locale',
+        value: debugInfo.locale || 'None',
+      },
+      {
+        label: 'Permanent Country Code',
+        value: debugInfo.permanentCountryCode || 'None',
+      },
+      {
+        label: 'Session Country Code',
+        value: debugInfo.sessionCountryCode || 'None',
+      },
+      {
+        label: 'System Requirement Met',
+        value: debugInfo.systemRequirementMet,
+      },
+      {
+        label: 'OS Version Supported',
+        value: debugInfo.osVersionSupported,
+      },
+      {
+        label: 'Anchor Entrypoint Override Active',
+        value: debugInfo.anchorEntrypointOverrideActive,
+      },
+      {
+        label: 'Primary Account Needs Signed In',
+        value: debugInfo.primaryAccountNeedsSignedIn,
+      },
+      {
+        label: 'Dogfood Client Status',
+        value: debugInfo.dogfoodStatus,
+      },
+    ];
+
+    if (debugInfo.booleanSettings) {
+      for (const [key, val] of Object.entries(debugInfo.booleanSettings)) {
+        settings.push({
+          label: key,
+          value: val,
+        });
+      }
+    }
+
+    return settings;
+  }
+
+  protected onSelectedTabIndexSelectedChanged_(
+      e: CustomEvent<{value: number}>) {
+    this.selectedTabIndex_ = e.detail.value;
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'glic-internals-app': GlicInternalsAppElement;
+  }
+}
+
+customElements.define(GlicInternalsAppElement.is, GlicInternalsAppElement);

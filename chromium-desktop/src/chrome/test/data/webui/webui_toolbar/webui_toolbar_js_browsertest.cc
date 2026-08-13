@@ -1,0 +1,96 @@
+// Copyright 2026 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "base/check.h"
+#include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
+#include "chrome/browser/ui/ui_features.h"
+#include "chrome/common/chrome_features.h"
+#include "chrome/common/webui_url_constants.h"
+#include "chrome/test/base/chrome_test_utils.h"
+#include "chrome/test/base/web_ui_mocha_browser_test.h"
+#include "content/public/common/content_features.h"
+#include "content/public/test/browser_test.h"
+
+class WebUiToolbarJsTest : public WebUIMochaBrowserTest {
+ public:
+  WebUiToolbarJsTest() {
+    set_test_loader_host(chrome::kChromeUIWebUIToolbarHost);
+
+    // Need features::IsWebUIToolbarEnabled() to return true
+    // to init the WebUI URL we use.
+    scoped_feature_list_.InitWithFeatures(
+        {features::kInitialWebUI, features::kWebUILocationBar}, {});
+    CHECK(features::IsWebUIToolbarEnabled());
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, AppMenuButton) {
+  RunTest("webui_toolbar/app_menu_button_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, ReadOnlyOmnibox) {
+  RunTest("webui_toolbar/readonly_omnibox_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, ContentSettingIcon) {
+  RunTest("webui_toolbar/content_setting_icon_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, PageActionIcon) {
+  RunTest("webui_toolbar/page_action_icon_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, PinnedToolbarAction) {
+  RunTest("webui_toolbar/pinned_toolbar_action_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, LocationBar) {
+  RunTest("webui_toolbar/location_bar_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, LocationIcon) {
+  RunTest("webui_toolbar/location_icon_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, IconFromTable) {
+  RunTest("webui_toolbar/icon_from_table_test.js", "mocha.run();");
+}
+
+// TODO(b/516086817): Permission chip is broken on Linux a11y build.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_PermissionChip DISABLED_PermissionChip
+#else
+#define MAYBE_PermissionChip PermissionChip
+#endif
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, MAYBE_PermissionChip) {
+  RunTest("webui_toolbar/permission_chip_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, PermissionDashboard) {
+  RunTest("webui_toolbar/permission_dashboard_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, ToolbarButton) {
+  RunTest("webui_toolbar/toolbar_button_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, ToolbarChipButton) {
+  RunTest("webui_toolbar/toolbar_chip_button_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, ToolbarApp) {
+  RunTest("webui_toolbar/toolbar_app_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, IPH) {
+  RunTest("webui_toolbar/iph_test.js", "mocha.run();");
+}
+
+IN_PROC_BROWSER_TEST_F(WebUiToolbarJsTest, BatterySaverButton) {
+  RunTest("webui_toolbar/battery_saver_button_test.js", "mocha.run();");
+}

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!-- TODO(b/507316824,b/514254246): Fill final strings, and prepare to be translateable. -->
+
+<grit-part>
+  <!-- Personal Context First Run Strings. -->
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_TITLE" desc="" formatter_data="android_java" translateable="false">
+    Lorem ipsum dolor sit amet
+  </message>
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_DESCRIPTION_ANDROID" desc="" formatter_data="android_java" translateable="false">
+    Lorem ipsum dolor sit amet.
+  </message>
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_CARD_1_ANDROID" desc="" formatter_data="android_java" translateable="false">
+    Lorem ipsum dolor sit amet.
+  </message>
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_CARD_2_ANDROID" desc="" formatter_data="android_java" translateable="false">
+    Lorem ipsum dolor sit amet.
+  </message>
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_LEARN_MORE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+    Lorem ipsum dolor <ph name="BEGIN_LINK">&lt;link&gt;</ph>sit amet<ph name="END_LINK">&lt;/link&gt;</ph>.
+  </message>
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_DESCRIPTION_DESKTOP" desc="" translateable="false">
+    Lorem ipsum dolor sit amet.
+  </message>
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_CARD_1_DESKTOP" desc="" translateable="false">
+    Lorem <ph name="TRIGGER_TEXT">$1<ex>@@</ex></ph> ipsum dolor sit amet.
+  </message>
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_CARD_2_DESKTOP" desc="" translateable="false">
+    Lorem ipsum dolor sit amet.
+  </message>
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_LEARN_MORE_DESKTOP" desc="" translateable="false">
+    Lorem ipsum dolor <ph name="BEGIN_LINK">&lt;a href="#"&gt;</ph>sit amet<ph name="END_LINK">&lt;/a&gt;</ph>.
+  </message>
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_PRIMARY_BUTTON" desc="" formatter_data="android_java" translateable="false">
+    Lorem
+  </message>
+  <message name="IDS_PERSONAL_CONTEXT_NOTICE_SECONDARY_BUTTON" desc="" formatter_data="android_java" translateable="false">
+    Ipsum
+  </message>
+
+  <!-- Android Autofill Settings Personal Context preferences strings. -->
+  <if expr="is_android">
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_TITLE_ANDROID" desc="The title of the preference that opens the settings fragment containing controls to manage data sharing with connected application." formatter_data="android_java">
+      Enhanced autofill
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_SUMMARY_ANDROID" desc="The description of the preference that opens the settings fragment containing controls to manage data sharing with connected application." formatter_data="android_java">
+      Powered by Personal Intelligence
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_SWITCH_TITLE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      Lorem ipsum dolor sit
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_SWITCH_SUMMARY_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_HELPING_IMPROVE_NOTICE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      You’re helping improve enhanced autofill by sharing data with Google
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_MANAGE_CONNECTED_APPS_TITLE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      Lorem ipsum
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_MANAGE_CONNECTED_APPS_SUMMARY_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_WHEN_USED_TITLE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      When used
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_LOGS_NOTICE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      When you type a request for enhanced autofill, Chrome logs how you use the feature, such as whether you accept, edit, or ignore autofill suggestions
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_ANALYZED_NOTICE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      The requests sent to Personal Intelligence with Gemini are analyzed to improve autofill
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_THINGS_TO_CONSIDER_TITLE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      Things to consider
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_HUMANS_NOTICE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      Page titles and URLs are sent to Google and may be reviewed by humans
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_NEVER_SEEN_NOTICE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      The info you autofill is never seen by anyone
+    </message>
+    <message name="IDS_PERSONAL_CONTEXT_AUTOFILL_SETTINGS_FOOTER_NOTICE_ANDROID" desc="" formatter_data="android_java" translateable="false">
+      Your content will not be used to improve AI. Your organization may change these settings at any time.
+    </message>
+  </if>
+</grit-part>

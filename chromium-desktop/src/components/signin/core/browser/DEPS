@@ -1,0 +1,16 @@
+include_rules = [
+  "+components/metrics",
+  "+components/privacy_sandbox/privacy_sandbox_prefs.h",
+  "+components/signin/public/base",
+  "+components/signin/public/identity_manager",
+  "+components/supervised_user/core/common/features.h",
+  "+components/supervised_user/core/common/buildflags.h",
+  "+components/sync/base/data_type.h",
+  "+mojo/public",
+]
+
+specific_include_rules = {
+  "mirror_account_reconcilor_delegate.cc": [
+    "+components/sync/base/features.h"
+  ],
+}

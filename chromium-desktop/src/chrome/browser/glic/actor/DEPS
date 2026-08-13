@@ -1,0 +1,4 @@
+include_rules = [
+  '+components/actor',
+  '+components/origin_gating',
+]

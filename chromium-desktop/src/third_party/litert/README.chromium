@@ -1,0 +1,23 @@
+Name: LiteRT
+Short Name: litert
+URL: https://github.com/google-ai-edge/LiteRT
+Version: N/A
+Revision: d419a5d6b81ad7f6db0a469dac5b82d47f3ac980
+Date: 2026-07-07
+Update Mechanism: Manual
+License: Apache-2.0
+License File: LICENSE
+Security Critical: Yes
+Shipped: yes
+CPEPrefix: unknown
+
+Description:
+LiteRT, successor to TensorFlow Lite. is Google's On-device framework for
+high-performance ML & GenAI deployment on edge platforms, via efficient
+conversion, runtime, and optimization.
+
+Local Modifications:
+None
+
+Update Process/Notes:
+Manual update.

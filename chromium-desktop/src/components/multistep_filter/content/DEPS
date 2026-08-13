@@ -1,0 +1,12 @@
+include_rules = [
+  "+components/multistep_filter/core",
+  "+content/public/browser",
+  "+net/http/http_response_headers.h",
+]
+
+specific_include_rules = {
+  ".*_unittest\\.cc": [
+    "+content/public/test",
+    "+components/unified_consent",
+  ],
+}

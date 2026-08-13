@@ -1,0 +1,4 @@
+include_rules = [
+  "+components/optimization_guide/core",
+  "+components/personal_context/proto",
+]

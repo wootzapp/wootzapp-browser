@@ -1,0 +1,137 @@
+/* Copyright 2026 The Chromium Authors
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the LICENSE file. */
+
+/* #css_wrapper_metadata_start
+ * #type=style-lit
+ * #scheme=relative
+ * #css_wrapper_metadata_end */
+
+:host {
+  /* To help make things line up nicely between the rich-text readonly view and
+   * the interactive <input>, we give everything here the same height,
+   * the height of the location bar. */
+  --omnibox-height: calc(var(--location-bar-height));
+  align-self: center;
+  border: none;
+  color: var(--color-omnibox-text);
+  display: flex;
+  flex: 1;
+  font-family: var(--omnibox-primary-font-family);
+  font-size: var(--omnibox-primary-font-size);
+  font-weight: var(--omnibox-primary-font-weight);
+  line-height: var(--omnibox-primary-line-height);
+  height: var(--omnibox-height);
+}
+
+/* #textContainerWrap exists to fill up space in a way that's sensitive to
+ * user locale's text direction, even when #textContainer is forced into LTR.
+ */
+#textContainerWrap {
+  display: flex;
+  flex: 1;
+  height: var(--omnibox-height);
+  /* We want to position textInput off of us */
+  position: relative;
+  /* Giving this a width makes flex shrink it to fit available space when this
+   * is too long. The exact value will get replaced by whatever flex computes
+   */
+  width: 200px;
+}
+
+#textContainer {
+  /* Both #textContainer and #textInput are included in the layout, with opacity
+   * used to determine which one is actually visible. Since the <input> element
+   * is always actually present, any interaction goes to it directly, making
+   * the switchover painless. #textContainer always being present lets
+   * #inlineAutocomplete use it to position itself in the right spot.
+   */
+  flex: 0 1 min-content;
+  height: var(--omnibox-height);
+  opacity: 1;
+  outline: none;
+  overflow: hidden;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+#textContainer span {
+  line-height: var(--omnibox-height);
+  vertical-align: middle;
+}
+
+#textContainer.force-ltr {
+  direction: ltr;
+}
+
+#textInput::selection {
+  background-color: var(--color-omnibox-selection-background);
+  color: var(--color-omnibox-selection-foreground);
+}
+
+/* We don't want URLs spellchecked */
+#textInput::spelling-error {
+  text-decoration: none;
+}
+
+#textInput::grammar-error {
+  text-decoration: none;
+}
+
+#textContainer .color-dim {
+  color: var(--color-omnibox-text-dimmed);
+}
+
+#textContainer .color-foreground-disabled {
+  color: var(--color-omnibox-foreground-disabled);
+}
+
+#textContainer .color-danger {
+  color: var(--color-omnibox-security-chip-dangerous);
+}
+
+#textContainer .strikethrough {
+  text-decoration: line-through;
+}
+
+#textInput {
+  appearance: none;
+  background-color: transparent;
+  border: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  height: var(--omnibox-height);
+  opacity: 0;
+  outline: none;
+  padding: 0;
+  position: absolute;
+  top: 0;
+  width: 100%;
+}
+
+:host(.dragging-over) #textContainer span {
+  background-color: var(--color-omnibox-selection-background);
+  color: var(--color-omnibox-selection-foreground);
+}
+
+#inlineAutocomplete {
+  /* This is only for sizing */
+  visibility: hidden;
+  white-space: pre;
+}
+
+#additionalText {
+  color: var(--color-omnibox-results-url);
+  /* fonts are the same as for the omnibox proper */
+  height: var(--omnibox-height);
+  line-height: var(--omnibox-height);
+  pointer-events: none;
+  position: relative;
+  white-space: pre;
+
+  /* Since the <input> is full-width, we want to be on top */
+  z-index: 2;
+}

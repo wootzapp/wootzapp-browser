@@ -1,0 +1,16 @@
+Name: libFuzzer
+URL: http://llvm.org/docs/LibFuzzer.html
+Version: N/A
+Revision: 3f386be62e362fa50284ebd24262966f1a93798e
+Update Mechanism: Autoroll
+License: Apache-with-LLVM-Exception, NCSA, MIT
+License File: LICENSE.TXT
+Security Critical: no
+Shipped: no
+
+Description:
+Library for in-process coverage-guided fuzz testing (fuzzing) of other
+libraries.
+
+Local Modifications:
+None.
