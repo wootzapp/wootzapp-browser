@@ -1,0 +1,23 @@
+services:
+  wootzapp-chromium-desktop:
+    image: ${CHROMIUM_IMAGE_NAME:-devjangid/wootzapp-chromium-desktop:local}
+    container_name: ${CHROMIUM_CONTAINER_NAME:-wootzapp-chromium-desktop}
+    shm_size: ${CHROMIUM_SHM_SIZE:-2g}
+    ports:
+      - "127.0.0.1:${CDP_PORT:-9222}:9222"
+      - "127.0.0.1:${VNC_PORT:-5900}:5900"
+      - "127.0.0.1:${NOVNC_PORT:-6080}:6080"
+    environment:
+      CHROMIUM_HEADLESS: ${CHROMIUM_HEADLESS:-1}
+      CHROMIUM_RESET_PROFILE: ${CHROMIUM_RESET_PROFILE:-1}
+      AUTHORING_MODE: ${AUTHORING_MODE:-off}
+      AUTHORING_SESSION: ${AUTHORING_SESSION:-default}
+      VNC_SCREEN: ${VNC_SCREEN:-1366x900x24}
+      CHROMIUM_START_URL: ${CHROMIUM_START_URL:-about:blank}
+      CHROMIUM_EXTRA_ARGS: ${CHROMIUM_EXTRA_ARGS:-}
+    healthcheck:
+      test: ["CMD", "chromium-runtime-entrypoint", "status", "--quiet"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
