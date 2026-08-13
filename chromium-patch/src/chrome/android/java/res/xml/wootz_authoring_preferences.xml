@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright 2026 The Chromium Authors
+Use of this source code is governed by a BSD-style license that can be
+found in the LICENSE file.
+-->
+
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <org.chromium.components.browser_ui.settings.TextMessagePreference
+        android:key="wootz_authoring_description"
+        android:summary="@string/wootz_authoring_description"
+        app:allowDividerBelow="false" />
+
+    <Preference
+        android:key="wootz_authoring_current_tab_url"
+        android:title="@string/wootz_authoring_current_tab_url_title"
+        android:summary="@string/wootz_authoring_current_tab_url_empty" />
+
+    <Preference
+        android:key="wootz_authoring_start"
+        android:title="@string/wootz_authoring_start_title"
+        android:summary="@string/wootz_authoring_start_summary" />
+
+    <Preference
+        android:key="wootz_authoring_replay"
+        android:title="@string/wootz_authoring_replay_title"
+        android:summary="@string/wootz_authoring_replay_summary" />
+</PreferenceScreen>

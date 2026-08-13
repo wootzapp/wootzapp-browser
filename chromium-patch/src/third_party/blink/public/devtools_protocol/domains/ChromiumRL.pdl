@@ -1,0 +1,716 @@
+experimental domain ChromiumRL
+  depends on DOM
+  depends on Page
+  depends on Performance
+
+  # ===========================================================================
+  # Commands
+  # ===========================================================================
+
+  # Enable ChromiumRL tracing
+  command enable
+    parameters
+      optional boolean captureTouchTraces
+      optional boolean captureLayoutTimings
+      optional boolean captureCLSAttribution
+      optional boolean captureCompositorLayers
+    returns
+      string sessionId
+
+  # Disable ChromiumRL tracing
+  command disable
+
+
+  # Get touch event traces with element attribution
+  command getTouchTraces
+    parameters
+      optional DOM.NodeId rootNodeId
+      optional number startTime
+      optional number endTime
+    returns
+      array of TouchTrace traces
+      integer totalEvents
+      number captureDuration
+
+  # Get per-element layout performance metrics
+  command getLayoutTimings
+    parameters
+      string frameId
+      optional number thresholdMs
+      optional boolean includeZeroTime
+    returns
+      array of ElementLayoutTiming elements
+      FrameLayoutMetrics frameMetrics
+
+  # Get CLS attribution data
+  command getCLSAttribution
+    parameters
+      optional number minShiftScore
+    returns
+      array of CLSEntry entries
+      number totalCLS
+      boolean exceedsGoodThreshold
+
+  # Get GPU compositor layer information
+  command getCompositorLayers
+    parameters
+      optional boolean includePaintInfo
+      optional boolean includeTransforms
+    returns
+      array of CompositorLayer layers
+      integer totalGPUMemory
+      integer pendingTextureUploads
+
+  # Capture signals during an interaction
+  command captureInteraction
+    parameters
+      InteractionType interactionType
+      DOM.NodeId targetNodeId
+      optional number captureDurationMs
+    returns
+      array of TouchTrace touchTraces
+      array of ElementLayoutTiming layoutTimings
+      array of CLSEntry clsEntries
+      array of CompositorLayer compositorLayers
+
+  command getVisualHash
+    returns
+      string visualHash
+      boolean hasVisualUpdate
+
+  # Captures the full semantic and visual state of the page for comparison
+  command captureStateSnapshot
+    returns
+      array of SnapshotNode snapshot
+
+  # Compares current page state against an uploaded snapshot
+  command computeStateDiff
+    parameters
+      array of SnapshotNode targetSnapshot
+    returns
+      SnapshotDiff diff
+
+  # Captures a full, rich snapshot of the DOM for diffing purposes.
+  # Includes computed styles, XPaths, and layout geometry.
+  command saveDOMState
+    returns
+      RichDOMState state
+
+  # Compares a saved state (reference) against the current live page (generated).
+  # Returns specific diff operations and actionable fixes.
+  command compareDOMState
+    parameters
+      RichDOMState referenceState
+      optional array of DeltaNode deltaNodes
+    returns
+      DOMDiffResult result
+
+  # Returns a navigation-optimized observation of the current page.
+  # Only interactive elements and optionally visible text content.
+  command getAgentObservation
+    parameters
+      optional boolean inViewportOnly
+      optional string rootSelector
+      optional integer maxElements
+      optional boolean includeContent
+      optional boolean includeDiff
+      optional boolean updateBaseline
+      optional integer maxInteractiveElements
+      optional integer maxContentBlocks
+      optional integer maxDiffItems
+    returns
+      AgentObservation observation
+
+  # Returns a structured model-facing page graph from DOM, AX, and layout facts.
+  command captureStructuredSnapshot
+    parameters
+      optional boolean inViewportOnly
+      optional string rootSelector
+      optional integer maxNodes
+      optional integer maxTextChars
+      optional boolean includeOffscreen
+      optional boolean includeDiff
+      optional boolean updateBaseline
+    returns
+      StructuredPageSnapshot snapshot
+
+  # Start tracking DOM differences. The first call will report the initial state.
+  command startDOMDiff
+  
+  # Stop tracking DOM differences.
+  command stopDOMDiff
+
+  # ===========================================================================
+  # Events
+  # ===========================================================================
+
+  # Fired when a DOM diff is detected.
+  event domDiffOccurred
+    parameters
+      array of NodeDiff diff
+
+  event layoutShiftDetected
+    parameters
+      CLSEntry entry
+      number cumulativeCLS
+
+  event touchInteractionCompleted
+    parameters
+      array of TouchTrace traces
+      DOM.NodeId targetNodeId
+
+  event layerTreeChanged
+    parameters
+      integer layerCount
+      integer gpuMemoryDelta
+
+  # ===========================================================================
+  # Types
+  # ===========================================================================
+
+  # DOM Diff Types
+  type AttributeModification extends object
+    properties
+      string name
+      string oldValue
+      string newValue
+
+  type CharacterDataModification extends object
+    properties
+      string oldData
+      string newData
+
+  type NodeStructure extends object
+    properties
+      DOM.NodeId nodeId
+      string nodeName
+      optional string nodeValue
+
+  # ===========================================================================
+  # State Snapshot & Diff Types
+  # ===========================================================================
+
+  type SnapshotStyle extends object
+    properties
+      string color
+      string backgroundColor
+      string display
+      string visibility
+      number opacity
+
+  type SnapshotNode extends object
+    properties
+      integer nodeId
+      optional integer parentId
+      string nodeName
+      string selectorPath
+      optional string fingerprint
+      optional string nodeValue
+      optional array of string attributes
+      DOM.Rect rect
+      optional SnapshotStyle style
+
+  type VisualMismatch extends object
+    properties
+      string selectorPath
+      number iou
+      DOM.Rect expectedRect
+      DOM.Rect actualRect
+
+  type ContentMismatch extends object
+    properties
+      string selectorPath
+      string expectedValue
+      string actualValue
+
+  type SnapshotDiff extends object
+    properties
+      number similarityScore
+      array of VisualMismatch visualMismatches
+      array of ContentMismatch contentMismatches
+      array of string missingNodes
+      array of string extraNodes
+      optional array of SnapshotNode targetSnapshot
+
+  type NodeDiff extends object
+    properties
+      DOM.NodeId nodeId
+      string selectorPath
+      optional array of AttributeModification attributeModifications
+      optional CharacterDataModification characterDataModification
+      optional array of NodeStructure addedNodes
+      optional array of NodeStructure removedNodes
+
+  # Single touch event with full attribution
+  type TouchTrace extends object
+    properties
+      number timestamp
+      TouchEventType eventType
+      number x
+      number y
+      optional number pressure
+      optional number radiusX
+      optional number radiusY
+      optional number rotationAngle
+      optional DOM.NodeId nodeId
+      optional string selectorPath
+      boolean wasHandled
+      boolean triggeredScroll
+      boolean triggeredNavigation
+      integer pointerId
+
+  type TouchEventType extends string
+    enum
+      touchstart
+      touchmove
+      touchend
+      touchcancel
+      pointerdown
+      pointermove
+      pointerup
+      pointercancel
+
+  # Layout timing for single element
+  type ElementLayoutTiming extends object
+    properties
+      DOM.NodeId nodeId
+      string selectorPath
+      string tagName
+      number layoutTimeMs
+      integer layoutInvalidations
+      number styleRecalcTimeMs
+      integer styleRecalcCount
+      number paintTimeMs
+      DOM.Rect boundingBox
+      boolean isInCriticalPath
+      boolean causedSiblingReflow
+      optional DOM.NodeId parentNodeId
+
+  # Aggregate frame metrics
+  type FrameLayoutMetrics extends object
+    properties
+      string frameId
+      number totalLayoutTimeMs
+      number totalStyleRecalcTimeMs
+      number totalPaintTimeMs
+      number firstContentfulPaint
+      number largestContentfulPaint
+      number timeToFirstByte
+      number domContentLoaded
+      number totalBlockingTime
+      integer longTaskCount
+
+  # CLS entry with attribution
+  type CLSEntry extends object
+    properties
+      number timestamp
+      number score
+      boolean hadRecentInput
+      array of ShiftedElement shiftedElements
+      array of ShiftSource sources
+      string sessionWindowId
+
+  type ShiftedElement extends object
+    properties
+      DOM.NodeId nodeId
+      string selectorPath
+      DOM.Rect previousRect
+      DOM.Rect currentRect
+      number shiftDistance
+      number scoreContribution
+
+  type ShiftSource extends object
+    properties
+      ShiftSourceType sourceType
+      optional DOM.NodeId nodeId
+      string description
+
+  type ShiftSourceType extends string
+    enum
+      image_load
+      font_load
+      dynamic_content
+      iframe_resize
+      animation
+      ad_injection
+      unknown
+
+  # Compositor layer info
+  type CompositorLayer extends object
+    properties
+      string layerId
+      optional string parentLayerId
+      optional DOM.NodeId ownerNodeId
+      optional string ownerSelector
+      DOM.Rect bounds
+      optional array of number transform
+      integer gpuMemoryBytes
+      array of CompositingReason compositingReasons
+      LayerType layerType
+      boolean isVisible
+      boolean isOpaque
+      integer paintCount
+      boolean usesGpuRasterization
+      optional string scrollParentId
+      optional string clipParentId
+
+  type CompositingReason extends string
+    enum
+      transform3D
+      video
+      canvas
+      plugin
+      iframe
+      backfaceVisibilityHidden
+      animation
+      filter
+      composited_scroll
+      overlap
+      negative_z_index
+      squashing
+      ancestor_clipping
+      perspective
+      preserve3D
+      will_change
+      backdrop_filter
+      root_scroller
+      scrollbar
+      link_highlight
+
+  type LayerType extends string
+    enum
+      picture
+      texture
+      solid_color
+      scrollbar
+
+  type InteractionType extends string
+    enum
+      tap
+      double_tap
+      long_press
+      swipe_left
+      swipe_right
+      swipe_up
+      swipe_down
+      pinch_zoom_in
+      pinch_zoom_out
+      drag_drop
+      scroll
+
+  # ----------------------------------------
+  # Rich DOM State Types
+  # ----------------------------------------
+
+  type RichDOMState extends object
+    properties
+      array of RichNode nodes
+      DOM.Rect viewport
+      string title
+      string url
+
+  type RichNode extends object
+    properties
+      DOM.NodeId nodeId
+      string tagName
+      optional DOM.NodeId parentId
+      optional integer siblingIndex
+      
+      # Location Identifiers
+      optional string stablePath
+      optional string cssSelector
+      optional string xpath
+      
+      # Content
+      optional array of DOMAttribute attributes
+      string textContent
+      
+      # Visuals
+      optional DOM.Rect bounds
+      optional boolean isVisible
+      optional boolean isInViewport
+      optional number zIndex
+      optional DOMComputedStyle keyStyles
+      
+      # Fingerprint for matching
+      optional string fingerprint
+
+  type DOMAttribute extends object
+    properties
+      string name
+      string value
+
+  type DOMComputedStyle extends object
+    properties
+      string display
+      string color
+      string backgroundColor
+      string fontSize
+      string fontWeight
+      string opacity
+      string visibility
+      string padding
+      string margin
+      string width
+      string height
+      string position
+      string overflow
+      string whiteSpace
+      string textAlign
+      string lineHeight
+      string textDecoration
+      string border
+      string borderRadius
+
+  # ----------------------------------------
+  # Delta Node Types (per-property scoring)
+  # ----------------------------------------
+
+  type DeltaNode extends object
+    properties
+      string xpath
+      array of DeltaProperty properties
+
+  type DeltaProperty extends object
+    properties
+      string cssProperty
+      string buggyValue
+      string goldValue
+
+  # ----------------------------------------
+  # DOM Diff Result Types
+  # ----------------------------------------
+
+  type DOMDiffResult extends object
+    properties
+      DiffSummary summary
+      array of DiffOperation insertions
+      array of DiffOperation deletions
+      array of DiffOperation moves
+      array of DiffOperation attributeChanges
+      array of DiffOperation textChanges
+      array of DiffOperation layoutChanges
+      array of DiffOperation styleChanges
+      array of DiffOperation typeChanges
+
+  type DiffSummary extends object
+    properties
+      integer totalNodesReference
+      integer totalNodesGenerated
+      integer matchedNodes
+      integer unmatchedReference
+      integer unmatchedGenerated
+      number structuralSimilarity
+      number textSimilarity
+      number layoutSimilarity
+      optional number styleSimilarity
+      optional number deltaScore
+      optional number deltaStyleScore
+      optional number deltaTextScore
+      optional number deltaLayoutScore
+      optional number deltaStructuralScore
+      optional integer deltaNodesTotal
+      optional integer deltaNodesFound
+
+  type DiffOperation extends object
+    properties
+      DOM.NodeId nodeId
+      string type
+      string tagName
+      string stablePath
+      string cssSelector
+      string xpath
+      
+      # Context
+      optional DOM.NodeId parentNodeId
+      optional string parentStablePath
+      
+      # Change Details
+      optional string oldValue
+      optional string newValue
+      optional RichNode nodeDetails # For insertions/deletions
+      optional DiffAttributes attributes # For attr changes
+      optional array of DiffStyle styles # For style changes
+      optional DiffLayout layout # For layout changes
+      
+      # Move Details
+      optional integer oldIndex
+      optional integer newIndex
+      optional string moveType # reorder vs reparent
+
+  type DiffAttributes extends object
+    properties
+      string name
+      string old
+      string new
+
+  type DiffStyle extends object
+    properties
+      string property
+      string old
+      string new
+
+  type DiffLayout extends object
+    properties
+      DOM.Rect oldBounds
+      DOM.Rect newBounds
+
+  # ===========================================================================
+  # Agent Observation Types
+  # ===========================================================================
+
+  type ScrollInfo extends object
+    properties
+      number scrollTop
+      number pageHeight
+      number viewportWidth
+      number viewportHeight
+      number devicePixelRatio
+      boolean canScrollDown
+      boolean canScrollUp
+
+  type ObservedElement extends object
+    properties
+      integer idx
+      optional DOM.NodeId nodeId
+      optional string fingerprint
+      string tag
+      string selector
+      optional string role
+      optional string accessibleName
+      optional DOM.Rect bounds
+      optional number centerX
+      optional number centerY
+      optional boolean isVisible
+      optional boolean isInViewport
+      optional boolean isHitTestable
+      optional string text
+      optional string context
+      optional string value
+      optional string placeholder
+      optional string type
+      optional string href
+      optional boolean disabled
+      optional boolean checked
+      optional boolean expanded
+      optional boolean selected
+      optional boolean required
+      optional boolean readonly
+      optional boolean invalid
+      optional string autocomplete
+      optional array of string options
+
+  type TableRow extends object
+    properties
+      array of string cells
+
+  type TableInfo extends object
+    properties
+      integer rowCount
+      integer columnCount
+      integer shownRowCount
+      integer shownColumnCount
+      integer shownRowStart
+      integer shownRowEnd
+      integer shownColumnStart
+      integer shownColumnEnd
+      boolean truncated
+      boolean cellTextTruncated
+      boolean tableTextTruncated
+      array of TableRow rows
+
+  type ContentBlock extends object
+    properties
+      optional DOM.NodeId nodeId
+      optional string fingerprint
+      string tag
+      string selector
+      string text
+      optional TableInfo table
+
+  type ObservationStats extends object
+    properties
+      integer rawElements
+      integer visibleElements
+      integer candidateInteractives
+      integer returnedInteractives
+      integer candidateContentBlocks
+      integer returnedContentBlocks
+      integer droppedHidden
+      integer droppedOffscreen
+      integer droppedCovered
+      integer droppedEmpty
+      integer droppedDuplicate
+
+  type AgentObservation extends object
+    properties
+      string url
+      string title
+      ScrollInfo scroll
+      array of ObservedElement elements
+      optional array of ContentBlock content
+      optional DOMDiffResult diff
+      optional ObservationStats stats
+
+  type NodeAttribute extends object
+    properties
+      string name
+      string value
+
+  type NodeState extends object
+    properties
+      string name
+      string value
+
+  type PageNode extends object
+    properties
+      string ref
+      integer index
+      optional DOM.NodeId nodeId
+      optional integer backendNodeId
+      optional string parentRef
+      array of string childRefs
+      integer sourceOrder
+      string tag
+      optional string role
+      optional string accessibleName
+      optional string description
+      optional string directText
+      optional string subtreeText
+      array of NodeAttribute selectedAttributes
+      array of NodeState states
+      array of string actionTypes
+      optional DOM.Rect bounds
+      optional DOM.Rect clippedBounds
+      boolean visible
+      boolean inViewport
+      boolean occluded
+      boolean hitTestable
+      boolean scrollable
+      optional string semanticBoundary
+      optional string repeatedGroupId
+      optional integer repeatedItemIndex
+      number confidence
+      boolean truncated
+
+  type StructuredSnapshotStats extends object
+    properties
+      integer rawNodes
+      integer returnedNodes
+      integer textChars
+      integer groups
+      integer droppedHidden
+      integer droppedOffscreen
+      integer droppedDuplicate
+      boolean truncated
+
+  type StructuredPageSnapshot extends object
+    properties
+      string snapshotId
+      integer documentRevision
+      string url
+      string title
+      array of string roots
+      array of PageNode nodes
+      StructuredSnapshotStats stats
+      optional DOMDiffResult diff

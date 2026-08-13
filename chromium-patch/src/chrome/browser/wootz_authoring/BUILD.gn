@@ -1,0 +1,47 @@
+# Copyright 2026 Wootzapp Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+static_library("wootz_authoring") {
+  sources = [
+    "wootz_authoring_client_state.cc",
+    "wootz_authoring_client_state.h",
+    "wootz_authoring_service.cc",
+    "wootz_authoring_service.h",
+    "wootz_authoring_service_factory.cc",
+    "wootz_authoring_service_factory.h",
+    "wootz_authoring_store.cc",
+    "wootz_authoring_store.h",
+    "wootz_authoring_tab_helper.cc",
+    "wootz_authoring_tab_helper.h",
+    "wootz_authoring_types.cc",
+    "wootz_authoring_types.h",
+    "wootz_authoring_url_loader_factory.cc",
+    "wootz_authoring_url_loader_factory.h",
+    "wootz_authoring_websocket.cc",
+    "wootz_authoring_websocket.h",
+  ]
+
+  deps = [
+    "//base",
+    "//chrome/browser/profiles",
+    "//chrome/common",
+    "//components/keyed_service/content",
+    "//components/keyed_service/core",
+    "//components/services/storage/public/mojom",
+    "//content/public/browser",
+    "//crypto",
+    "//mojo/public/cpp/bindings",
+    "//mojo/public/cpp/system",
+    "//net",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
+    "//third_party/blink/public/common",
+    "//third_party/blink/public/mojom:mojom_platform",
+    "//url",
+  ]
+
+  if (is_android) {
+    deps += [ "//chrome/android:chrome_jni_headers" ]
+  }
+}
