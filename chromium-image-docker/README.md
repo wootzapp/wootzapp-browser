@@ -1,18 +1,41 @@
-# Wootz Chromium Desktop Runtime Image
+# Wootzapp Desktop Browser Runtime
 
-This directory builds a browser-only Docker image for the Linux desktop Wootz Chromium payload.
+This directory builds and runs the Docker runtime for Wootzapp Desktop Browser.
 
-The image owns browser lifecycle only:
+The runtime starts the browser, exposes Chrome DevTools Protocol, optionally starts a headed VNC/noVNC display stack, and provides health commands for automation.
 
-- start Wootz Chromium
-- expose CDP on container port `9222`
-- expose VNC/noVNC in headed mode
-- keep a reusable browser profile location
-- expose basic `status`, `wait`, and `version` commands
+## What the runtime does
 
-## Build Payload
+The container entrypoint is:
 
-The Chromium release payload must be present in:
+```text
+chromium-runtime-entrypoint
+```
+
+By default it runs:
+
+```text
+chromium-runtime-entrypoint serve
+```
+
+The serve command:
+
+- prepares the browser profile directory
+- starts Xvfb, VNC, and noVNC when headed mode is enabled
+- starts Wootzapp Desktop Browser
+- starts a public CDP bridge
+- waits until CDP is ready
+- keeps the browser process alive
+
+## Build payload
+
+The browser payload must be present in:
+
+```text
+chromium-image-docker/build/
+```
+
+The directory must contain the Chromium executable and its runtime files, for example:
 
 ```text
 build/
@@ -24,69 +47,155 @@ build/
   ...
 ```
 
-This prepared directory currently hardlinks `build/` from `../chromium-image/build/` to avoid another large copy.
+The build script checks that `build/chrome` exists and is executable before building the image.
 
-## Build
+## Build the image
+
+From this directory:
 
 ```bash
-cd /home/ubuntu/DevJangid/browser-envs/chromium-image-docker
-docker buildx build --platform linux/amd64 -t devjangid/wootzapp-chromium-desktop:latest --load .
+cd chromium-image-docker
+./scripts/build_image.sh
 ```
 
-For push:
+The default image name is:
 
-```bash
-docker buildx build --platform linux/amd64 -t devjangid/wootzapp-chromium-desktop:latest --push .
+```text
+devjangid/wootzapp-chromium-desktop:local
 ```
 
-## Run Locally
-
-With Compose:
+Override it with:
 
 ```bash
+CHROMIUM_IMAGE_NAME=wootzapp-chromium-desktop:local ./scripts/build_image.sh
+```
+
+You can also build directly with Docker:
+
+```bash
+docker build -t wootzapp-chromium-desktop:local .
+```
+
+## Run with Docker Compose
+
+Start the browser:
+
+```bash
+cd chromium-image-docker
 docker compose up -d
+```
+
+Check status:
+
+```bash
 docker compose exec wootzapp-chromium-desktop chromium-runtime-entrypoint status
 ```
 
-Headed with noVNC:
+Wait until ready:
+
+```bash
+docker compose exec wootzapp-chromium-desktop chromium-runtime-entrypoint wait --timeout 30
+```
+
+Stop the container:
+
+```bash
+docker compose down
+```
+
+## Run with helper scripts
+
+The helper scripts use the same runtime settings as the Docker image.
+
+Build:
+
+```bash
+./scripts/build_image.sh
+```
+
+Run:
+
+```bash
+./scripts/run_local.sh
+```
+
+Stop:
+
+```bash
+./scripts/stop_local.sh
+```
+
+## CDP ports
+
+The browser itself starts CDP privately on:
+
+```text
+127.0.0.1:9223
+```
+
+The runtime exposes a public CDP bridge on:
+
+```text
+0.0.0.0:9222
+```
+
+From the host, use:
+
+```text
+http://127.0.0.1:9222/json/version
+```
+
+The public CDP port is controlled by:
+
+```env
+CDP_PORT=9222
+```
+
+The private browser CDP port is controlled by:
+
+```env
+CHROMIUM_CDP_PORT=9223
+```
+
+Most tools should use the public port, `9222`.
+
+## Headless and headed modes
+
+Headless mode is the default:
+
+```env
+CHROMIUM_HEADLESS=1
+```
+
+Headed mode starts Xvfb, VNC, and noVNC:
 
 ```bash
 CHROMIUM_HEADLESS=0 docker compose up -d
 ```
 
-Headless:
-
-```bash
-docker run -d --rm \
-  --name wootzapp-chromium-desktop \
-  --shm-size=2g \
-  -p 127.0.0.1:9222:9222 \
-  devjangid/wootzapp-chromium-desktop:latest
-```
-
-Headed with noVNC:
-
-```bash
-docker run -d --rm \
-  --name wootzapp-chromium-desktop \
-  --shm-size=2g \
-  -p 127.0.0.1:9222:9222 \
-  -p 127.0.0.1:5900:5900 \
-  -p 127.0.0.1:6080:6080 \
-  -e CHROMIUM_HEADLESS=0 \
-  devjangid/wootzapp-chromium-desktop:latest
-```
-
-Open:
+The default ports are:
 
 ```text
-CDP:   http://127.0.0.1:9222/json/version
-noVNC: http://127.0.0.1:6080/vnc.html?host=127.0.0.1&port=6080&autoconnect=1&resize=scale
+CDP:   9222
+VNC:   5900
+noVNC: 6080
 ```
 
-## Runtime Commands
+Open noVNC in a browser:
 
-Inside the container:
+```text
+http://127.0.0.1:6080/vnc.html?host=127.0.0.1&port=6080&autoconnect=1&resize=scale
+```
+
+The display size is controlled by `VNC_SCREEN`, for example:
+
+```env
+VNC_SCREEN=1366x900x24
+```
+
+## Runtime commands
+
+Run these inside the container:
 
 ```bash
 chromium-runtime-entrypoint serve
@@ -94,3 +203,93 @@ chromium-runtime-entrypoint status
 chromium-runtime-entrypoint wait --timeout 30
 chromium-runtime-entrypoint version
 ```
+
+`status` checks the public CDP endpoint and prints runtime information.
+
+`wait` polls the public CDP endpoint until it is ready or the timeout expires.
+
+`version` prints the browser version from the Chromium executable.
+
+## Common configuration
+
+The Compose file supports these runtime values:
+
+```env
+CHROMIUM_IMAGE_NAME=devjangid/wootzapp-chromium-desktop:local
+CHROMIUM_CONTAINER_NAME=wootzapp-chromium-desktop
+CHROMIUM_SHM_SIZE=2g
+CDP_PORT=9222
+VNC_PORT=5900
+NOVNC_PORT=6080
+CHROMIUM_HEADLESS=1
+CHROMIUM_RESET_PROFILE=1
+AUTHORING_MODE=off
+AUTHORING_SESSION=default
+VNC_SCREEN=1366x900x24
+CHROMIUM_START_URL=about:blank
+CHROMIUM_EXTRA_ARGS=
+```
+
+Examples:
+
+```bash
+CHROMIUM_START_URL=https://example.com docker compose up -d
+CHROMIUM_EXTRA_ARGS="--disable-features=SomeFeature" docker compose up -d
+```
+
+## Browser profile
+
+The runtime stores browser profile data under:
+
+```text
+/home/wootz/wootz-browser-sessions
+```
+
+By default the profile is reset on each container start:
+
+```env
+CHROMIUM_RESET_PROFILE=1
+```
+
+Set it to `0` when a persistent profile is needed:
+
+```bash
+CHROMIUM_RESET_PROFILE=0 docker compose up -d
+```
+
+## Logs
+
+Runtime metadata is written inside the container under `/tmp/chromium-runtime/`.
+
+Important files include:
+
+```text
+/tmp/chromium-runtime/browser-launch.env
+/tmp/chromium-runtime/chrome.log
+```
+
+## Authoring mode
+
+Authoring is disabled by default:
+
+```env
+AUTHORING_MODE=off
+```
+
+Capture and replay are enabled with:
+
+```env
+AUTHORING_MODE=capture
+AUTHORING_MODE=replay
+AUTHORING_SESSION=<session>
+```
+
+See the browser workflow README for details:
+
+```text
+../chromium-desktop/README.md
+```
+
+## Agent-browser
+
+Some images include optional `agent-browser` automation. When present, see `agent-browser/README.md`.
