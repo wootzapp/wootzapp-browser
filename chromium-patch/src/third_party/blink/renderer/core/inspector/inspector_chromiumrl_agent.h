@@ -134,6 +134,23 @@ class CORE_EXPORT InspectorChromiumRLAgent final
       std::optional<bool> update_baseline,
       std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot>* snapshot) override;
 
+  protocol::Response compareStructuredSnapshots(
+      std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot> before_snapshot,
+      std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot> after_snapshot,
+      std::optional<String> action_type,
+      std::unique_ptr<protocol::ChromiumRL::StructuredSnapshotDiff>* diff) override;
+
+  protocol::Response captureSnapshotDiff(
+      std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot> before_snapshot,
+      std::optional<String> action_type,
+      std::optional<bool> in_viewport_only,
+      std::optional<String> root_selector,
+      std::optional<int> max_nodes,
+      std::optional<int> max_text_chars,
+      std::optional<bool> include_offscreen,
+      std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot>* after_snapshot,
+      std::unique_ptr<protocol::ChromiumRL::StructuredSnapshotDiff>* diff) override;
+
   // Callbacks from browser internals (hook these into Chromium)
   void OnTouchEvent(const blink::WebPointerEvent& event, Node* target_node);
   void OnLayoutComplete(LocalFrame* frame);
@@ -240,6 +257,12 @@ class CORE_EXPORT InspectorChromiumRLAgent final
   std::unique_ptr<protocol::ChromiumRL::ContentBlock> BuildContentBlock(
       Element* element,
       const String& precomputed_text);
+
+  protocol::Response BuildStructuredSnapshotDiff(
+      protocol::ChromiumRL::StructuredPageSnapshot* before_snapshot,
+      protocol::ChromiumRL::StructuredPageSnapshot* after_snapshot,
+      const std::optional<String>& action_type,
+      std::unique_ptr<protocol::ChromiumRL::StructuredSnapshotDiff>* diff);
 
   Member<InspectedFrames> inspected_frames_;
   Member<ChromiumRLTraceBuffer> trace_buffer_;

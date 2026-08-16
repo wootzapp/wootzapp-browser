@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/core/dom/mutation_record.h"
 #include "third_party/blink/renderer/core/inspector/inspector_dom_agent.h"
 #include "third_party/blink/renderer/core/inspector/protocol/chromium_rl.h"
+#include "third_party/blink/renderer/core/inspector/protocol/protocol.h"
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/inspector/identifiers_factory.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
@@ -54,6 +55,7 @@
 #include "third_party/blink/renderer/core/layout/hit_test_request.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "ui/accessibility/ax_enums.mojom-blink.h"
+#include "third_party/icu/source/common/unicode/uchar.h"
 
 namespace blink {
 
@@ -4240,5 +4242,1975 @@ protocol::Response InspectorChromiumRLAgent::getAgentObservation(
   return protocol::Response::Success();
 }
 
+
+protocol::Response InspectorChromiumRLAgent::BuildStructuredSnapshotDiff(
+    protocol::ChromiumRL::StructuredPageSnapshot* before_snapshot,
+    protocol::ChromiumRL::StructuredPageSnapshot* after_snapshot,
+    const std::optional<String>& action_type,
+    std::unique_ptr<protocol::ChromiumRL::StructuredSnapshotDiff>* out) {
+  using PageNode = protocol::ChromiumRL::PageNode;
+
+  struct IdentityStatsData {
+    int nodes = 0;
+    int anchored_nodes = 0;
+    int positional_nodes = 0;
+    int duplicate_anchor_bases = 0;
+    int duplicate_anchor_nodes = 0;
+    int path_collisions = 0;
+  };
+  struct IdentityProblemData {
+    String kind;
+    String ref;
+    String parent_ref;
+    String child_ref;
+    Vector<String> child_refs;
+    String path;
+    String existing_path;
+    Vector<PageNode*> nodes;
+  };
+  struct PathIndexData {
+    HashMap<String, PageNode*> by_ref;
+    HashMap<String, PageNode*> by_path;
+    HashMap<String, String> path_by_ref;
+    Vector<String> refs_in_order;
+    Vector<String> paths;
+    Vector<IdentityProblemData> problems;
+    IdentityStatsData stats;
+  };
+  struct CanonicalValue {
+    enum class Kind { kNull, kString, kAttributes, kStates, kActions };
+    Kind kind = Kind::kNull;
+    String text;
+    Vector<std::pair<String, String>> pairs;
+    Vector<String> strings;
+  };
+  struct FieldChangeData {
+    int field = 0;
+    CanonicalValue before;
+    CanonicalValue after;
+  };
+  struct DiffEntryData {
+    String path;
+    bool semantic = false;
+    PageNode* node = nullptr;
+    Vector<FieldChangeData> fields;
+    String repeated_group_id;
+    std::optional<int> repeated_item_index;
+  };
+  struct SubtreeIndexData {
+    String operation;
+    String root_path;
+    Vector<String> member_paths;
+    int descendant_count = 0;
+    int subtree_node_count = 0;
+    double document_percent = 0;
+    String visible_text;
+    Vector<String> interactive_paths;
+  };
+  struct RepeatedGroupIndexData {
+    String operation;
+    String repeated_group_id;
+    String tag;
+    String role;
+    Vector<String> changed_fields;
+    int count = 0;
+    Vector<int> item_indices;
+    Vector<String> member_paths;
+  };
+
+  if (!before_snapshot || !after_snapshot)
+    return protocol::Response::InvalidParams("Structured snapshots are required");
+
+  auto is_python_whitespace = [](UChar c) -> bool {
+    return (c >= 0x0009 && c <= 0x000d) ||
+           (c >= 0x001c && c <= 0x0020) || c == 0x0085 || c == 0x00a0 ||
+           c == 0x1680 || (c >= 0x2000 && c <= 0x200a) ||
+           c == 0x2028 || c == 0x2029 || c == 0x202f || c == 0x205f ||
+           c == 0x3000;
+  };
+  auto clean_text = [&is_python_whitespace](const String& value) -> String {
+    StringBuilder result;
+    bool pending_space = false;
+    for (wtf_size_t i = 0; i < value.length(); ++i) {
+      UChar c = value[i];
+      if (is_python_whitespace(c)) {
+        if (result.length())
+          pending_space = true;
+        continue;
+      }
+      if (pending_space) {
+        result.Append(' ');
+        pending_space = false;
+      }
+      result.Append(c);
+    }
+    return result.ToString();
+  };
+  auto fold_case = [](const String& value) -> String {
+    return value.FoldCase();
+  };
+  auto python_code_point_less = [](const String& left,
+                                   const String& right) -> bool {
+    auto next_code_point = [](const String& value, wtf_size_t* offset) -> UChar32 {
+      UChar32 result = value[(*offset)++];
+      if (U16_IS_LEAD(result) && *offset < value.length() &&
+          U16_IS_TRAIL(value[*offset])) {
+        result = U16_GET_SUPPLEMENTARY(result, value[(*offset)++]);
+      }
+      return result;
+    };
+    wtf_size_t left_offset = 0;
+    wtf_size_t right_offset = 0;
+    while (left_offset < left.length() && right_offset < right.length()) {
+      UChar32 left_code_point = next_code_point(left, &left_offset);
+      UChar32 right_code_point = next_code_point(right, &right_offset);
+      if (left_code_point != right_code_point)
+        return left_code_point < right_code_point;
+    }
+    return left.length() < right.length();
+  };
+  auto json_quote = [](const String& value) -> String {
+    static const char kHex[] = "0123456789abcdef";
+    StringBuilder result;
+    result.Append('"');
+    for (wtf_size_t i = 0; i < value.length(); ++i) {
+      UChar c = value[i];
+      switch (c) {
+        case '"': result.Append("\\\""); break;
+        case '\\': result.Append("\\\\"); break;
+        case '\b': result.Append("\\b"); break;
+        case '\f': result.Append("\\f"); break;
+        case '\n': result.Append("\\n"); break;
+        case '\r': result.Append("\\r"); break;
+        case '\t': result.Append("\\t"); break;
+        default:
+          if (c < 0x20) {
+            result.Append("\\u00");
+            result.Append(kHex[(c >> 4) & 0xf]);
+            result.Append(kHex[c & 0xf]);
+          } else {
+            result.Append(c);
+          }
+      }
+    }
+    result.Append('"');
+    return result.ToString();
+  };
+  auto rstrip_python_whitespace = [&is_python_whitespace](const String& value) {
+    wtf_size_t end = value.length();
+    while (end && is_python_whitespace(value[end - 1]))
+      --end;
+    return value.substr(0, end);
+  };
+  auto contains_string = [](const Vector<String>& values,
+                            const String& value) -> bool {
+    for (const String& existing : values) {
+      if (existing == value)
+        return true;
+    }
+    return false;
+  };
+  auto node_tag = [&clean_text](PageNode* node) -> String {
+    String raw_value = node ? node->getTag() : String();
+    if (raw_value.empty())
+      raw_value = "?";
+    String value = clean_text(raw_value).ToAsciiLower();
+    StringBuilder result;
+    for (wtf_size_t i = 0; i < value.length(); ++i) {
+      if (value[i] == '/')
+        result.Append('_');
+      else
+        result.Append(value[i]);
+    }
+    return result.ToString();
+  };
+  auto stable_anchor = [&clean_text, &fold_case](PageNode* node) -> String {
+    if (!node)
+      return String();
+    String value = clean_text(node->getDirectText(String()));
+    if (value.empty()) {
+      String role = clean_text(node->getRole(String())).ToAsciiLower();
+      String semantic =
+          clean_text(node->getSemanticBoundary(String())).ToAsciiLower();
+      bool has_non_scroll_action = false;
+      for (const String& action : *node->getActionTypes()) {
+        if (clean_text(action).ToAsciiLower() != "scroll") {
+          has_non_scroll_action = true;
+          break;
+        }
+      }
+      bool meaningful_role = role != "" && role != "application" &&
+                             role != "document" && role != "generic" &&
+                             role != "main" && role != "none";
+      if (node->getChildRefs()->empty() || !semantic.empty() ||
+          has_non_scroll_action || meaningful_role) {
+        value = clean_text(node->getAccessibleName(String()));
+      }
+    }
+    value = fold_case(value);
+    StringBuilder anchor;
+    bool separator_pending = false;
+    for (wtf_size_t i = 0; i < value.length(); ++i) {
+      UChar c = value[i];
+      bool ascii_word = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+      if (ascii_word) {
+        if (separator_pending && anchor.length() > 0)
+          anchor.Append('-');
+        anchor.Append(c);
+        separator_pending = false;
+      } else if (anchor.length() > 0) {
+        separator_pending = true;
+      }
+    }
+    String result = anchor.ToString();
+    while (result.ends_with("-"))
+      result = result.substr(0, result.length() - 1);
+    return result.length() <= 20 ? result : result.substr(0, 20);
+  };
+
+  auto build_path_index = [&](protocol::ChromiumRL::StructuredPageSnapshot* snapshot)
+      -> PathIndexData {
+    PathIndexData result;
+    HashMap<String, int> node_position;
+    int position = 0;
+    for (const auto& owned_node : *snapshot->getNodes()) {
+      PageNode* node = owned_node.get();
+      String ref = node->getRef();
+      if (ref.empty()) {
+        IdentityProblemData problem;
+        problem.kind = "missing_ref";
+        problem.nodes.push_back(node);
+        result.problems.push_back(std::move(problem));
+        continue;
+      }
+      auto existing = result.by_ref.find(ref);
+      if (existing != result.by_ref.end()) {
+        IdentityProblemData problem;
+        problem.kind = "duplicate_ref";
+        problem.ref = ref;
+        problem.nodes.push_back(existing->value);
+        problem.nodes.push_back(node);
+        result.problems.push_back(std::move(problem));
+        continue;
+      }
+      result.by_ref.Set(ref, node);
+      node_position.Set(ref, position++);
+      result.refs_in_order.push_back(ref);
+    }
+    result.stats.nodes = static_cast<int>(result.refs_in_order.size());
+
+    HashMap<String, Vector<String>> children_from_parent;
+    for (const String& ref : result.refs_in_order)
+      children_from_parent.Set(ref, Vector<String>());
+    for (const String& ref : result.refs_in_order) {
+      PageNode* node = result.by_ref.at(ref);
+      if (!node->hasParentRef())
+        continue;
+      String parent_ref = node->getParentRef(String());
+      auto parent = children_from_parent.find(parent_ref);
+      if (parent != children_from_parent.end())
+        parent->value.push_back(ref);
+    }
+
+    HashMap<String, Vector<String>> ordered_children;
+    for (const String& ref : result.refs_in_order) {
+      PageNode* node = result.by_ref.at(ref);
+      HashMap<String, int> child_counts;
+      Vector<String> listed_children;
+      Vector<String> duplicate_children;
+      for (const String& child_ref : *node->getChildRefs()) {
+        int count = 1;
+        auto count_it = child_counts.find(child_ref);
+        if (count_it != child_counts.end())
+          count = count_it->value + 1;
+        child_counts.Set(child_ref, count);
+        if (count == 2)
+          duplicate_children.push_back(child_ref);
+      }
+      std::sort(duplicate_children.begin(), duplicate_children.end(),
+                python_code_point_less);
+      if (!duplicate_children.empty()) {
+        IdentityProblemData problem;
+        problem.kind = "duplicate_child_ref";
+        problem.parent_ref = ref;
+        problem.child_refs = duplicate_children;
+        problem.nodes.push_back(node);
+        result.problems.push_back(std::move(problem));
+      }
+      for (const String& child_ref : *node->getChildRefs()) {
+        auto child_it = result.by_ref.find(child_ref);
+        if (child_it == result.by_ref.end())
+          continue;
+        PageNode* child = child_it->value;
+        if (child->getParentRef(String()) != ref) {
+          IdentityProblemData problem;
+          problem.kind = "parent_child_disagreement";
+          problem.parent_ref = ref;
+          problem.child_ref = child_ref;
+          problem.nodes.push_back(node);
+          problem.nodes.push_back(child);
+          result.problems.push_back(std::move(problem));
+          continue;
+        }
+        if (!contains_string(listed_children, child_ref))
+          listed_children.push_back(child_ref);
+      }
+      Vector<String> all_children = children_from_parent.at(ref);
+      bool same_children = listed_children.size() == all_children.size();
+      if (same_children) {
+        for (const String& child_ref : listed_children) {
+          if (!contains_string(all_children, child_ref)) {
+            same_children = false;
+            break;
+          }
+        }
+      }
+      if (!same_children) {
+        std::sort(all_children.begin(), all_children.end(),
+                  [&](const String& left, const String& right) {
+                    PageNode* left_node = result.by_ref.at(left);
+                    PageNode* right_node = result.by_ref.at(right);
+                    int left_position = node_position.at(left);
+                    int right_position = node_position.at(right);
+                    int left_order = left_node->getSourceOrder();
+                    int right_order = right_node->getSourceOrder();
+                    if (!left_order)
+                      left_order = left_position;
+                    if (!right_order)
+                      right_order = right_position;
+                    if (left_order != right_order)
+                      return left_order < right_order;
+                    return left_position < right_position;
+                  });
+        ordered_children.Set(ref, std::move(all_children));
+      } else {
+        ordered_children.Set(ref, std::move(listed_children));
+      }
+    }
+
+    Vector<String> root_refs;
+    for (const String& ref : *snapshot->getRoots()) {
+      if (result.by_ref.find(ref) != result.by_ref.end() &&
+          !contains_string(root_refs, ref)) {
+        root_refs.push_back(ref);
+      }
+    }
+    for (const String& ref : result.refs_in_order) {
+      PageNode* node = result.by_ref.at(ref);
+      String parent_ref = node->getParentRef(String());
+      if ((!node->hasParentRef() || result.by_ref.find(parent_ref) == result.by_ref.end()) &&
+          !contains_string(root_refs, ref)) {
+        root_refs.push_back(ref);
+      }
+    }
+
+    auto sibling_segments = [&](const Vector<String>& refs) {
+      HashMap<String, int> totals;
+      Vector<String> tags;
+      Vector<String> anchors;
+      for (const String& ref : refs) {
+        String tag = node_tag(result.by_ref.at(ref));
+        String anchor = stable_anchor(result.by_ref.at(ref));
+        tags.push_back(tag);
+        anchors.push_back(anchor);
+        if (!anchor.empty()) {
+          String base = tag + String("\x1f") + anchor;
+          auto it = totals.find(base);
+          totals.Set(base, it == totals.end() ? 1 : it->value + 1);
+        }
+      }
+      for (const auto& entry : totals) {
+        if (entry.value > 1) {
+          result.stats.duplicate_anchor_bases++;
+          result.stats.duplicate_anchor_nodes += entry.value;
+        }
+      }
+      HashMap<String, int> anchored_seen;
+      HashMap<String, int> positional_seen;
+      HashMap<String, String> segments;
+      for (wtf_size_t i = 0; i < refs.size(); ++i) {
+        const String& ref = refs[i];
+        const String& tag = tags[i];
+        const String& anchor = anchors[i];
+        if (!anchor.empty()) {
+          String base = tag + String("\x1f") + anchor;
+          auto seen = anchored_seen.find(base);
+          int ordinal = seen == anchored_seen.end() ? 1 : seen->value + 1;
+          anchored_seen.Set(base, ordinal);
+          segments.Set(ref, tag + "{" + anchor + "}[" +
+                                String::Number(ordinal) + "]");
+          result.stats.anchored_nodes++;
+        } else {
+          auto seen = positional_seen.find(tag);
+          int ordinal = seen == positional_seen.end() ? 1 : seen->value + 1;
+          positional_seen.Set(tag, ordinal);
+          segments.Set(ref, tag + "[" + String::Number(ordinal) + "]");
+          result.stats.positional_nodes++;
+        }
+      }
+      return segments;
+    };
+
+    struct WalkTask {
+      String ref;
+      String path;
+      bool exit = false;
+    };
+    HashSet<String> visiting;
+    Vector<WalkTask> stack;
+    HashMap<String, String> root_segments = sibling_segments(root_refs);
+    for (wtf_size_t i = root_refs.size(); i > 0; --i)
+      stack.push_back(WalkTask{root_refs[i - 1], root_segments.at(root_refs[i - 1]), false});
+    while (!stack.empty()) {
+      WalkTask task = stack.back();
+      stack.pop_back();
+      if (task.exit) {
+        visiting.erase(task.ref);
+        continue;
+      }
+      if (visiting.Contains(task.ref)) {
+        IdentityProblemData problem;
+        problem.kind = "cycle";
+        problem.path = task.path;
+        problem.nodes.push_back(result.by_ref.at(task.ref));
+        result.problems.push_back(std::move(problem));
+        continue;
+      }
+      auto existing_path = result.path_by_ref.find(task.ref);
+      if (existing_path != result.path_by_ref.end()) {
+        IdentityProblemData problem;
+        problem.kind = "node_reached_more_than_once";
+        problem.path = task.path;
+        problem.existing_path = existing_path->value;
+        problem.nodes.push_back(result.by_ref.at(task.ref));
+        result.problems.push_back(std::move(problem));
+        continue;
+      }
+      visiting.insert(task.ref);
+      result.path_by_ref.Set(task.ref, task.path);
+      stack.push_back(WalkTask{task.ref, task.path, true});
+      Vector<String> children = ordered_children.at(task.ref);
+      HashMap<String, String> segments = sibling_segments(children);
+      for (wtf_size_t i = children.size(); i > 0; --i) {
+        const String& child_ref = children[i - 1];
+        stack.push_back(WalkTask{child_ref,
+                                 task.path + "/" + segments.at(child_ref),
+                                 false});
+      }
+    }
+
+    Vector<PageNode*> unreachable;
+    for (const String& ref : result.refs_in_order) {
+      if (result.path_by_ref.find(ref) == result.path_by_ref.end())
+        unreachable.push_back(result.by_ref.at(ref));
+    }
+    if (!unreachable.empty()) {
+      IdentityProblemData problem;
+      problem.kind = "unreachable_nodes";
+      problem.nodes = std::move(unreachable);
+      result.problems.push_back(std::move(problem));
+    }
+    HashMap<String, Vector<String>> refs_by_path;
+    for (const String& ref : result.refs_in_order) {
+      auto path_it = result.path_by_ref.find(ref);
+      if (path_it == result.path_by_ref.end())
+        continue;
+      auto inserted = refs_by_path.insert(path_it->value, Vector<String>());
+      inserted.stored_value->value.push_back(ref);
+    }
+    for (const auto& entry : refs_by_path) {
+      if (entry.value.size() <= 1)
+        continue;
+      result.stats.path_collisions++;
+      IdentityProblemData problem;
+      problem.kind = "path_collision";
+      problem.path = entry.key;
+      for (const String& ref : entry.value)
+        problem.nodes.push_back(result.by_ref.at(ref));
+      result.problems.push_back(std::move(problem));
+    }
+    for (const String& ref : result.refs_in_order) {
+      auto path_it = result.path_by_ref.find(ref);
+      if (path_it == result.path_by_ref.end())
+        continue;
+      result.by_path.Set(path_it->value, result.by_ref.at(ref));
+      result.paths.push_back(path_it->value);
+    }
+    return result;
+  };
+
+  PathIndexData before_index = build_path_index(before_snapshot);
+  PathIndexData after_index = build_path_index(after_snapshot);
+
+  auto string_value = [](const String& value) -> std::unique_ptr<protocol::Value> {
+    return protocol::StringValue::create(value);
+  };
+  auto null_value = []() -> std::unique_ptr<protocol::Value> {
+    return protocol::Value::null();
+  };
+  auto string_list_value = [](const Vector<String>& values)
+      -> std::unique_ptr<protocol::Value> {
+    auto list = protocol::ListValue::create();
+    for (const String& value : values)
+      list->pushValue(protocol::StringValue::create(value));
+    return list;
+  };
+
+  auto identity_stats_value = [](const IdentityStatsData& stats) {
+    return protocol::ChromiumRL::StructuredSnapshotIdentityStats::create()
+        .setNodes(stats.nodes)
+        .setAnchored_nodes(stats.anchored_nodes)
+        .setPositional_nodes(stats.positional_nodes)
+        .setDuplicate_anchor_bases(stats.duplicate_anchor_bases)
+        .setDuplicate_anchor_nodes(stats.duplicate_anchor_nodes)
+        .setPath_collisions(stats.path_collisions)
+        .build();
+  };
+  auto endpoint_value = [&](protocol::ChromiumRL::StructuredPageSnapshot* snapshot) {
+    return protocol::ChromiumRL::StructuredSnapshotDiffEndpoint::create()
+        .setSnapshot_id(snapshot->getSnapshotId())
+        .setDocument_revision(protocol::FundamentalValue::create(
+            snapshot->getDocumentRevision()))
+        .setUrl(snapshot->getUrl())
+        .build();
+  };
+
+  auto canonical_pair_sort_key = [&json_quote](
+      const std::pair<String, String>& item) -> String {
+    return String("{\"name\":") + json_quote(item.first) +
+           ",\"value\":" + json_quote(item.second) + "}";
+  };
+  auto sort_canonical_pairs = [&](Vector<std::pair<String, String>>* pairs) {
+    std::sort(pairs->begin(), pairs->end(),
+              [&](const auto& left, const auto& right) {
+                return python_code_point_less(canonical_pair_sort_key(left),
+                                              canonical_pair_sort_key(right));
+              });
+  };
+  auto sort_canonical_strings = [&](Vector<String>* values) {
+    std::sort(values->begin(), values->end(),
+              [&](const String& left, const String& right) {
+                return python_code_point_less(json_quote(left), json_quote(right));
+              });
+  };
+  auto canonical_value = [&](PageNode* node, int field) -> CanonicalValue {
+    CanonicalValue value;
+    if (field == 0) {
+      value.kind = CanonicalValue::Kind::kString;
+      value.text = node->getTag();
+    } else if (field == 1 && node->hasRole()) {
+      value.kind = CanonicalValue::Kind::kString;
+      value.text = node->getRole(String());
+    } else if (field == 2 && node->hasAccessibleName()) {
+      value.kind = CanonicalValue::Kind::kString;
+      value.text = node->getAccessibleName(String());
+    } else if (field == 3 && node->hasDirectText()) {
+      value.kind = CanonicalValue::Kind::kString;
+      value.text = node->getDirectText(String());
+    } else if (field == 4) {
+      value.kind = CanonicalValue::Kind::kAttributes;
+      for (const auto& item : *node->getSelectedAttributes())
+        value.pairs.push_back(
+            std::make_pair(item->getName(), item->getValue()));
+      sort_canonical_pairs(&value.pairs);
+    } else if (field == 5) {
+      value.kind = CanonicalValue::Kind::kStates;
+      for (const auto& item : *node->getStates())
+        value.pairs.push_back(
+            std::make_pair(item->getName(), item->getValue()));
+      sort_canonical_pairs(&value.pairs);
+    } else if (field == 6) {
+      value.kind = CanonicalValue::Kind::kActions;
+      for (const String& item : *node->getActionTypes())
+        value.strings.push_back(item);
+      sort_canonical_strings(&value.strings);
+    } else if (field == 7 && node->hasSemanticBoundary()) {
+      value.kind = CanonicalValue::Kind::kString;
+      value.text = node->getSemanticBoundary(String());
+    }
+    return value;
+  };
+  auto canonical_equal = [](const CanonicalValue& left,
+                            const CanonicalValue& right) -> bool {
+    return left.kind == right.kind && left.text == right.text &&
+           left.pairs == right.pairs && left.strings == right.strings;
+  };
+  auto canonical_empty = [](const CanonicalValue& value) -> bool {
+    return value.kind == CanonicalValue::Kind::kNull ||
+           (value.kind == CanonicalValue::Kind::kString && value.text.empty()) ||
+           ((value.kind == CanonicalValue::Kind::kAttributes ||
+             value.kind == CanonicalValue::Kind::kStates) &&
+            value.pairs.empty()) ||
+           (value.kind == CanonicalValue::Kind::kActions && value.strings.empty());
+  };
+  auto canonical_protocol_value = [&](const CanonicalValue& value)
+      -> std::unique_ptr<protocol::Value> {
+    if (value.kind == CanonicalValue::Kind::kNull)
+      return null_value();
+    if (value.kind == CanonicalValue::Kind::kString)
+      return string_value(value.text);
+    auto list = protocol::ListValue::create();
+    if (value.kind == CanonicalValue::Kind::kActions) {
+      for (const String& item : value.strings)
+        list->pushValue(protocol::StringValue::create(item));
+    } else {
+      for (const auto& item : value.pairs) {
+        auto object = protocol::DictionaryValue::create();
+        object->setString("name", item.first);
+        object->setString("value", item.second);
+        list->pushValue(std::move(object));
+      }
+    }
+    return list;
+  };
+
+  auto meaningful_node = [&clean_text](PageNode* node) -> bool {
+    return !clean_text(node->getDirectText(String())).empty() ||
+           !clean_text(node->getAccessibleName(String())).empty() ||
+           !node->getSelectedAttributes()->empty() || !node->getStates()->empty() ||
+           !node->getActionTypes()->empty();
+  };
+
+  auto compared_fingerprint = [&](PageNode* node) -> String {
+    StringBuilder builder;
+    for (int field = 0; field < 8; ++field) {
+      CanonicalValue value = canonical_value(node, field);
+      if (canonical_empty(value))
+        continue;
+      builder.Append(String::Number(field));
+      builder.Append(':');
+      builder.Append(String::Number(static_cast<int>(value.kind)));
+      builder.Append(':');
+      builder.Append(String::Number(value.text.length()));
+      builder.Append(':');
+      builder.Append(value.text);
+      for (const auto& item : value.pairs) {
+        builder.Append('|');
+        builder.Append(String::Number(item.first.length()));
+        builder.Append(':');
+        builder.Append(item.first);
+        builder.Append('=');
+        builder.Append(String::Number(item.second.length()));
+        builder.Append(':');
+        builder.Append(item.second);
+      }
+      for (const String& item : value.strings) {
+        builder.Append('|');
+        builder.Append(String::Number(item.length()));
+        builder.Append(':');
+        builder.Append(item);
+      }
+      builder.Append(';');
+    }
+    return builder.ToString();
+  };
+
+  auto append_compared_node = [&](PageNode* node)
+      -> std::unique_ptr<protocol::ChromiumRL::StructuredComparedNode> {
+    auto result = protocol::ChromiumRL::StructuredComparedNode::create().build();
+    CanonicalValue tag = canonical_value(node, 0);
+    CanonicalValue role = canonical_value(node, 1);
+    CanonicalValue name = canonical_value(node, 2);
+    CanonicalValue direct = canonical_value(node, 3);
+    CanonicalValue attrs = canonical_value(node, 4);
+    CanonicalValue states = canonical_value(node, 5);
+    CanonicalValue actions = canonical_value(node, 6);
+    CanonicalValue boundary = canonical_value(node, 7);
+    if (!canonical_empty(tag))
+      result->setTag(tag.text);
+    if (!canonical_empty(role))
+      result->setRole(role.text);
+    if (!canonical_empty(name))
+      result->setAccessibleName(name.text);
+    if (!canonical_empty(direct))
+      result->setDirectText(direct.text);
+    if (!canonical_empty(attrs)) {
+      auto values = std::make_unique<protocol::Array<protocol::ChromiumRL::NodeAttribute>>();
+      for (const auto& item : attrs.pairs)
+        values->push_back(protocol::ChromiumRL::NodeAttribute::create()
+                              .setName(item.first).setValue(item.second).build());
+      result->setSelectedAttributes(std::move(values));
+    }
+    if (!canonical_empty(states)) {
+      auto values = std::make_unique<protocol::Array<protocol::ChromiumRL::NodeState>>();
+      for (const auto& item : states.pairs)
+        values->push_back(protocol::ChromiumRL::NodeState::create()
+                              .setName(item.first).setValue(item.second).build());
+      result->setStates(std::move(values));
+    }
+    if (!canonical_empty(actions)) {
+      auto values = std::make_unique<protocol::Array<String>>();
+      for (const String& item : actions.strings)
+        values->push_back(item);
+      result->setActionTypes(std::move(values));
+    }
+    if (!canonical_empty(boundary))
+      result->setSemanticBoundary(boundary.text);
+    return result;
+  };
+
+  auto collision_node_value = [&](PageNode* node) {
+    Vector<String> child_refs;
+    for (const String& ref : *node->getChildRefs())
+      child_refs.push_back(ref);
+    auto result = protocol::ChromiumRL::StructuredCollisionNode::create()
+        .setRef(string_value(node->getRef()))
+        .setParentRef(node->hasParentRef()
+                          ? string_value(node->getParentRef(String()))
+                          : null_value())
+        .setChildRefs(string_list_value(child_refs))
+        .build();
+    auto compared = append_compared_node(node);
+    if (compared->hasTag()) result->setTag(compared->getTag(String()));
+    if (compared->hasRole()) result->setRole(compared->getRole(String()));
+    if (compared->hasAccessibleName())
+      result->setAccessibleName(compared->getAccessibleName(String()));
+    if (compared->hasDirectText())
+      result->setDirectText(compared->getDirectText(String()));
+    if (compared->hasSemanticBoundary())
+      result->setSemanticBoundary(compared->getSemanticBoundary(String()));
+    if (!node->getSelectedAttributes()->empty()) {
+      CanonicalValue attrs = canonical_value(node, 4);
+      auto values = std::make_unique<protocol::Array<protocol::ChromiumRL::NodeAttribute>>();
+      for (const auto& item : attrs.pairs)
+        values->push_back(protocol::ChromiumRL::NodeAttribute::create()
+                              .setName(item.first).setValue(item.second).build());
+      result->setSelectedAttributes(std::move(values));
+    }
+    if (!node->getStates()->empty()) {
+      CanonicalValue states = canonical_value(node, 5);
+      auto values = std::make_unique<protocol::Array<protocol::ChromiumRL::NodeState>>();
+      for (const auto& item : states.pairs)
+        values->push_back(protocol::ChromiumRL::NodeState::create()
+                              .setName(item.first).setValue(item.second).build());
+      result->setStates(std::move(values));
+    }
+    if (!node->getActionTypes()->empty()) {
+      CanonicalValue actions = canonical_value(node, 6);
+      auto values = std::make_unique<protocol::Array<String>>();
+      for (const String& item : actions.strings)
+        values->push_back(item);
+      result->setActionTypes(std::move(values));
+    }
+    return result;
+  };
+
+  if (!before_index.problems.empty() || !after_index.problems.empty()) {
+    auto errors = std::make_unique<
+        protocol::Array<protocol::ChromiumRL::StructuredIdentityError>>();
+    auto append_error = [&](const String& side, const PathIndexData& index) {
+      if (index.problems.empty())
+        return;
+      auto problems = std::make_unique<
+          protocol::Array<protocol::ChromiumRL::StructuredIdentityProblem>>();
+      for (const IdentityProblemData& data : index.problems) {
+        auto nodes = std::make_unique<
+            protocol::Array<protocol::ChromiumRL::StructuredCollisionNode>>();
+        for (PageNode* node : data.nodes)
+          nodes->push_back(collision_node_value(node));
+        auto problem = protocol::ChromiumRL::StructuredIdentityProblem::create()
+                           .setKind(data.kind)
+                           .setNodes(std::move(nodes))
+                           .build();
+        if (!data.ref.empty()) problem->setRef(data.ref);
+        if (!data.parent_ref.empty()) problem->setParent_ref(data.parent_ref);
+        if (!data.child_ref.empty()) problem->setChild_ref(data.child_ref);
+        if (!data.child_refs.empty()) {
+          auto values = std::make_unique<protocol::Array<String>>();
+          for (const String& value : data.child_refs) values->push_back(value);
+          problem->setChild_refs(std::move(values));
+        }
+        if (!data.path.empty()) problem->setPath(data.path);
+        if (!data.existing_path.empty()) problem->setExisting_path(data.existing_path);
+        problems->push_back(std::move(problem));
+      }
+      errors->push_back(protocol::ChromiumRL::StructuredIdentityError::create()
+                            .setSide(side)
+                            .setMessage(side +
+                                " snapshot cannot be assigned safe unique node paths")
+                            .setProblems(std::move(problems))
+                            .build());
+    };
+    append_error("before", before_index);
+    append_error("after", after_index);
+    auto totals = protocol::ChromiumRL::StructuredDiffCounts::create().build();
+    totals->setAdded(0); totals->setRemoved(0); totals->setChanged(0);
+    totals->setChanges(0);
+    auto emitted = protocol::ChromiumRL::StructuredDiffCounts::create().build();
+    emitted->setAdded(0); emitted->setRemoved(0); emitted->setChanged(0);
+    emitted->setSemantic_entry_count(0);
+    emitted->setStructural_entry_count(0);
+    emitted->setChanges(0);
+    auto payload = protocol::ChromiumRL::StructuredDiffPayload::create().build();
+    payload->setErrors(std::move(errors));
+    *out = protocol::ChromiumRL::StructuredSnapshotDiff::create()
+        .setSource("runner_snapshot_diff")
+        .setInterval("before_snapshot_to_after_snapshot")
+        .setStatus("unsafe_node_identity")
+        .setAction_type(action_type.has_value() ? string_value(*action_type)
+                                                : null_value())
+        .setGeometry_excluded(true)
+        .setCovers_live_control_state(false)
+        .setBefore(endpoint_value(before_snapshot))
+        .setAfter(endpoint_value(after_snapshot))
+        .setChange_count(0)
+        .setTotals(std::move(totals))
+        .setEmitted_counts(std::move(emitted))
+        .setDiff(std::move(payload))
+        .build();
+    return protocol::Response::Success();
+  }
+
+  auto identity = protocol::ChromiumRL::StructuredSnapshotIdentity::create()
+      .setStrategy("own_content_or_semantic_anchor_with_positional_fallback")
+      .setBefore(identity_stats_value(before_index.stats))
+      .setAfter(identity_stats_value(after_index.stats))
+      .build();
+
+  auto url_without_fragment = [](const String& url) -> String {
+    unsigned fragment = url.find('#');
+    return fragment == kNotFound ? url : url.substr(0, fragment);
+  };
+  auto canonical_document_url = [&](const String& url) -> String {
+    String base = url_without_fragment(url);
+    unsigned colon = base.find(':');
+    if (colon == kNotFound)
+      return base;
+    StringBuilder result;
+    result.Append(base.substr(0, colon).ToAsciiLower());
+    result.Append(':');
+    unsigned authority_start = colon + 1;
+    if (authority_start + 1 >= base.length() ||
+        base[authority_start] != '/' || base[authority_start + 1] != '/') {
+      result.Append(base.substr(authority_start));
+      return result.ToString();
+    }
+    result.Append("//");
+    authority_start += 2;
+    unsigned authority_end = authority_start;
+    while (authority_end < base.length() && base[authority_end] != '/' &&
+           base[authority_end] != '?') {
+      authority_end++;
+    }
+    result.Append(base.substr(authority_start, authority_end - authority_start)
+                      .ToAsciiLower());
+    result.Append(base.substr(authority_end));
+    return result.ToString();
+  };
+  auto visible_document_text = [&](protocol::ChromiumRL::StructuredPageSnapshot* snapshot) {
+    struct TextRow {
+      int order = 0;
+      int position = 0;
+      String text;
+    };
+    Vector<TextRow> rows;
+    int position = 0;
+    for (const auto& owned_node : *snapshot->getNodes()) {
+      PageNode* node = owned_node.get();
+      if (!node->getVisible()) {
+        position++;
+        continue;
+      }
+      String direct = clean_text(node->getDirectText(String()));
+      String subtree = clean_text(node->getSubtreeText(String()));
+      String text = direct;
+      if (node->getTruncated() && !direct.empty() &&
+          subtree.length() > direct.length() &&
+          subtree.length() <= std::max<wtf_size_t>(1200, direct.length() * 4)) {
+        text = subtree;
+      }
+      if (text.empty()) {
+        String role = clean_text(node->getRole(String())).ToAsciiLower();
+        String boundary =
+            clean_text(node->getSemanticBoundary(String())).ToAsciiLower();
+        bool fact_node = node->getChildRefs()->empty() || !role.empty() ||
+                         !boundary.empty() || !node->getActionTypes()->empty();
+        if (fact_node) {
+          String raw_text = node->getAccessibleName(String());
+          if (raw_text.empty())
+            raw_text = node->getSubtreeText(String());
+          text = clean_text(raw_text);
+        }
+      }
+      if (!text.empty()) {
+        int order = node->getSourceOrder();
+        if (!order)
+          order = position;
+        rows.push_back(TextRow{order, position, text});
+      }
+      position++;
+    }
+    std::stable_sort(rows.begin(), rows.end(),
+                     [](const TextRow& left, const TextRow& right) {
+                       return left.order < right.order;
+                     });
+    HashSet<String> seen;
+    Vector<String> result;
+    for (const TextRow& row : rows) {
+      if (!seen.Contains(row.text)) {
+        seen.insert(row.text);
+        result.push_back(row.text);
+      }
+    }
+    return result;
+  };
+
+  String before_url = before_snapshot->getUrl();
+  String after_url = after_snapshot->getUrl();
+  if (before_url != after_url &&
+      canonical_document_url(before_url) != canonical_document_url(after_url)) {
+    Vector<String> before_text = visible_document_text(before_snapshot);
+    Vector<String> after_text = visible_document_text(after_snapshot);
+    HashSet<String> before_set;
+    HashSet<String> after_set;
+    for (const String& value : before_text) before_set.insert(value);
+    for (const String& value : after_text) after_set.insert(value);
+    Vector<String> removed_text;
+    Vector<String> added_text;
+    for (const String& value : before_text)
+      if (!after_set.Contains(value)) removed_text.push_back(value);
+    for (const String& value : after_text)
+      if (!before_set.Contains(value)) added_text.push_back(value);
+
+    auto removed_values = std::make_unique<protocol::Array<String>>();
+    for (const String& value : removed_text) removed_values->push_back(value);
+    auto added_values = std::make_unique<protocol::Array<String>>();
+    for (const String& value : added_text) added_values->push_back(value);
+    auto text_delta = protocol::ChromiumRL::StructuredNavigationTextDelta::create()
+        .setRemoved(std::move(removed_values))
+        .setAdded(std::move(added_values))
+        .setRemoved_total(static_cast<int>(removed_text.size()))
+        .setAdded_total(static_cast<int>(added_text.size()))
+        .setTruncated(protocol::ChromiumRL::StructuredTruncatedCounts::create()
+                          .setRemoved(0).setAdded(0).build())
+        .build();
+    int before_nodes = static_cast<int>(before_snapshot->getNodes()->size());
+    int after_nodes = static_cast<int>(after_snapshot->getNodes()->size());
+    auto totals = protocol::ChromiumRL::StructuredDiffCounts::create().build();
+    totals->setRemoved_nodes(before_nodes);
+    totals->setAdded_nodes(after_nodes);
+    totals->setRemoved_text(static_cast<int>(removed_text.size()));
+    totals->setAdded_text(static_cast<int>(added_text.size()));
+    auto emitted = protocol::ChromiumRL::StructuredDiffCounts::create().build();
+    emitted->setRemoved_nodes(0);
+    emitted->setAdded_nodes(0);
+    emitted->setRemoved_text(static_cast<int>(removed_text.size()));
+    emitted->setAdded_text(static_cast<int>(added_text.size()));
+    emitted->setSemantic_entry_count(0);
+    emitted->setStructural_entry_count(0);
+    auto payload = protocol::ChromiumRL::StructuredDiffPayload::create().build();
+    payload->setNavigation(protocol::ChromiumRL::StructuredNavigation::create()
+                               .setFrom(before_url).setTo(after_url).build());
+    payload->setRemoved_node_count(before_nodes);
+    payload->setAdded_node_count(after_nodes);
+    payload->setText_delta(std::move(text_delta));
+    *out = protocol::ChromiumRL::StructuredSnapshotDiff::create()
+        .setSource("runner_snapshot_diff")
+        .setInterval("before_snapshot_to_after_snapshot")
+        .setAction_type(action_type.has_value() ? string_value(*action_type)
+                                                : null_value())
+        .setGeometry_excluded(true)
+        .setCovers_live_control_state(false)
+        .setIdentity(std::move(identity))
+        .setStatus("document_replaced")
+        .setBefore(endpoint_value(before_snapshot))
+        .setAfter(endpoint_value(after_snapshot))
+        .setChange_count(before_nodes + after_nodes)
+        .setTotals(std::move(totals))
+        .setEmitted_counts(std::move(emitted))
+        .setDiff(std::move(payload))
+        .build();
+    return protocol::Response::Success();
+  }
+
+  Vector<String> before_paths = before_index.paths;
+  Vector<String> after_paths = after_index.paths;
+  std::sort(before_paths.begin(), before_paths.end(), python_code_point_less);
+  std::sort(after_paths.begin(), after_paths.end(), python_code_point_less);
+  HashSet<String> before_set;
+  HashSet<String> after_set;
+  for (const String& path : before_paths) before_set.insert(path);
+  for (const String& path : after_paths) after_set.insert(path);
+  HashSet<String> added_set;
+  HashSet<String> removed_set;
+  for (const String& path : after_paths)
+    if (!before_set.Contains(path)) added_set.insert(path);
+  for (const String& path : before_paths)
+    if (!after_set.Contains(path)) removed_set.insert(path);
+  int raw_added_before_relocation_match = static_cast<int>(added_set.size());
+  int raw_removed_before_relocation_match = static_cast<int>(removed_set.size());
+
+  HashMap<String, Vector<String>> removed_by_fingerprint;
+  HashMap<String, Vector<String>> added_by_fingerprint;
+  Vector<String> fingerprint_order;
+  HashSet<String> fingerprints_seen;
+  for (const String& path : before_paths) {
+    if (!removed_set.Contains(path) || !meaningful_node(before_index.by_path.at(path)))
+      continue;
+    String fingerprint = compared_fingerprint(before_index.by_path.at(path));
+    auto inserted = removed_by_fingerprint.insert(fingerprint, Vector<String>());
+    inserted.stored_value->value.push_back(path);
+    if (!fingerprints_seen.Contains(fingerprint)) {
+      fingerprints_seen.insert(fingerprint);
+      fingerprint_order.push_back(fingerprint);
+    }
+  }
+  for (const String& path : after_paths) {
+    if (!added_set.Contains(path) || !meaningful_node(after_index.by_path.at(path)))
+      continue;
+    String fingerprint = compared_fingerprint(after_index.by_path.at(path));
+    added_by_fingerprint.insert(fingerprint, Vector<String>())
+        .stored_value->value.push_back(path);
+  }
+  auto path_parts = [](const String& path) {
+    Vector<String> parts;
+    unsigned start = 0;
+    while (start <= path.length()) {
+      unsigned slash = path.find('/', start);
+      unsigned end = slash == kNotFound ? path.length() : slash;
+      parts.push_back(path.substr(start, end - start));
+      if (slash == kNotFound)
+        break;
+      start = slash + 1;
+    }
+    return parts;
+  };
+  struct RelocationCandidate {
+    int distance = 0;
+    int depth_difference = 0;
+    String old_path;
+    String new_path;
+  };
+  int relocated_nodes_suppressed = 0;
+  for (const String& fingerprint : fingerprint_order) {
+    auto added_it = added_by_fingerprint.find(fingerprint);
+    if (added_it == added_by_fingerprint.end())
+      continue;
+    const Vector<String>& old_paths = removed_by_fingerprint.at(fingerprint);
+    const Vector<String>& new_paths = added_it->value;
+    Vector<RelocationCandidate> candidates;
+    for (const String& old_path : old_paths) {
+      Vector<String> old_parts = path_parts(old_path);
+      for (const String& new_path : new_paths) {
+        Vector<String> new_parts = path_parts(new_path);
+        int common = 0;
+        while (common < static_cast<int>(old_parts.size()) &&
+               common < static_cast<int>(new_parts.size()) &&
+               old_parts[common] == new_parts[common]) {
+          common++;
+        }
+        candidates.push_back(RelocationCandidate{
+            static_cast<int>(old_parts.size() + new_parts.size()) - 2 * common,
+            std::abs(static_cast<int>(old_parts.size()) -
+                     static_cast<int>(new_parts.size())),
+            old_path, new_path});
+      }
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [&](const RelocationCandidate& left,
+                  const RelocationCandidate& right) {
+                if (left.distance != right.distance)
+                  return left.distance < right.distance;
+                if (left.depth_difference != right.depth_difference)
+                  return left.depth_difference < right.depth_difference;
+                if (left.old_path != right.old_path)
+                  return python_code_point_less(left.old_path, right.old_path);
+                return python_code_point_less(left.new_path, right.new_path);
+              });
+    HashSet<String> paired_old;
+    HashSet<String> paired_new;
+    int pair_limit = static_cast<int>(std::min(old_paths.size(), new_paths.size()));
+    for (const RelocationCandidate& candidate : candidates) {
+      if (paired_old.Contains(candidate.old_path) ||
+          paired_new.Contains(candidate.new_path)) {
+        continue;
+      }
+      paired_old.insert(candidate.old_path);
+      paired_new.insert(candidate.new_path);
+      removed_set.erase(candidate.old_path);
+      added_set.erase(candidate.new_path);
+      relocated_nodes_suppressed++;
+      if (static_cast<int>(paired_old.size()) >= pair_limit)
+        break;
+    }
+  }
+
+  auto field_name = [](int field) -> String {
+    switch (field) {
+      case 0: return "tag";
+      case 1: return "role";
+      case 2: return "accessibleName";
+      case 3: return "directText";
+      case 4: return "selectedAttributes";
+      case 5: return "states";
+      case 6: return "actionTypes";
+      case 7: return "semanticBoundary";
+      default: return String();
+    }
+  };
+  Vector<DiffEntryData> changed_entries;
+  int subtree_text_changes_ignored = 0;
+  for (const String& path : before_paths) {
+    if (!after_set.Contains(path))
+      continue;
+    PageNode* before_node = before_index.by_path.at(path);
+    PageNode* after_node = after_index.by_path.at(path);
+    DiffEntryData entry;
+    entry.path = path;
+    entry.semantic = meaningful_node(before_node) || meaningful_node(after_node);
+    for (int field = 0; field < 8; ++field) {
+      CanonicalValue before_value = canonical_value(before_node, field);
+      CanonicalValue after_value = canonical_value(after_node, field);
+      if (!canonical_equal(before_value, after_value)) {
+        entry.fields.push_back(
+            FieldChangeData{field, std::move(before_value), std::move(after_value)});
+      }
+    }
+    if (!entry.fields.empty()) {
+      if (after_node->hasRepeatedGroupId()) {
+        entry.repeated_group_id = after_node->getRepeatedGroupId(String());
+        if (after_node->hasRepeatedItemIndex())
+          entry.repeated_item_index = after_node->getRepeatedItemIndex(0);
+      }
+      changed_entries.push_back(std::move(entry));
+    } else if (clean_text(before_node->getSubtreeText(String())) !=
+               clean_text(after_node->getSubtreeText(String()))) {
+      subtree_text_changes_ignored++;
+    }
+  }
+
+  auto make_node_entries = [&](const Vector<String>& sorted_paths,
+                               const HashSet<String>& selected,
+                               const PathIndexData& index) {
+    Vector<DiffEntryData> entries;
+    for (const String& path : sorted_paths) {
+      if (!selected.Contains(path))
+        continue;
+      PageNode* node = index.by_path.at(path);
+      DiffEntryData entry;
+      entry.path = path;
+      entry.semantic = meaningful_node(node);
+      entry.node = node;
+      if (node->hasRepeatedGroupId()) {
+        entry.repeated_group_id = node->getRepeatedGroupId(String());
+        if (node->hasRepeatedItemIndex())
+          entry.repeated_item_index = node->getRepeatedItemIndex(0);
+      }
+      entries.push_back(std::move(entry));
+    }
+    return entries;
+  };
+  Vector<DiffEntryData> added_entries =
+      make_node_entries(after_paths, added_set, after_index);
+  Vector<DiffEntryData> removed_entries =
+      make_node_entries(before_paths, removed_set, before_index);
+
+  auto last_slash = [](const String& path) -> unsigned {
+    unsigned result = kNotFound;
+    unsigned start = 0;
+    while (start < path.length()) {
+      unsigned found = path.find('/', start);
+      if (found == kNotFound)
+        break;
+      result = found;
+      start = found + 1;
+    }
+    return result;
+  };
+  auto build_subtree_indexes = [&](const String& operation,
+                                   const Vector<String>& sorted_paths,
+                                   const HashSet<String>& selected,
+                                   const PathIndexData& index,
+                                   int* indexed_descendants) {
+    HashMap<String, Vector<String>> children;
+    for (const String& path : sorted_paths)
+      children.Set(path, Vector<String>());
+    for (const String& path : sorted_paths) {
+      unsigned slash = last_slash(path);
+      if (slash == kNotFound)
+        continue;
+      String parent = path.substr(0, slash);
+      auto parent_it = children.find(parent);
+      if (parent_it != children.end())
+        parent_it->value.push_back(path);
+    }
+    for (auto& item : children) {
+      std::sort(item.value.begin(), item.value.end(), python_code_point_less);
+    }
+    Vector<String> roots;
+    for (const String& path : sorted_paths) {
+      if (!selected.Contains(path))
+        continue;
+      unsigned slash = last_slash(path);
+      String parent = slash == kNotFound ? String() : path.substr(0, slash);
+      if (slash == kNotFound || !selected.Contains(parent))
+        roots.push_back(path);
+    }
+    Vector<SubtreeIndexData> indexes;
+    Vector<String> pending;
+    for (wtf_size_t i = roots.size(); i > 0; --i)
+      pending.push_back(roots[i - 1]);
+    int document_nodes = std::max(1, static_cast<int>(index.by_path.size()));
+    while (!pending.empty()) {
+      String root = pending.back();
+      pending.pop_back();
+      Vector<String> members;
+      Vector<String> member_stack;
+      member_stack.push_back(root);
+      while (!member_stack.empty()) {
+        String path = member_stack.back();
+        member_stack.pop_back();
+        if (!selected.Contains(path))
+          continue;
+        members.push_back(path);
+        const Vector<String>& path_children = children.at(path);
+        for (wtf_size_t i = path_children.size(); i > 0; --i)
+          member_stack.push_back(path_children[i - 1]);
+      }
+      double share = static_cast<double>(members.size()) / document_nodes;
+      Vector<String> selected_children;
+      for (const String& child : children.at(root))
+        if (selected.Contains(child)) selected_children.push_back(child);
+      if (share > 0.60 && !selected_children.empty()) {
+        for (wtf_size_t i = selected_children.size(); i > 0; --i)
+          pending.push_back(selected_children[i - 1]);
+        continue;
+      }
+      if (members.size() == 1)
+        continue;
+      SubtreeIndexData subtree;
+      subtree.operation = operation;
+      subtree.root_path = root;
+      subtree.member_paths = members;
+      subtree.descendant_count = static_cast<int>(members.size()) - 1;
+      subtree.subtree_node_count = static_cast<int>(members.size());
+      subtree.document_percent =
+          std::nearbyint(share * 10000.0) / 100.0;
+      PageNode* root_node = index.by_path.at(root);
+      String raw_visible_text = root_node->getSubtreeText(String());
+      if (raw_visible_text.empty())
+        raw_visible_text = root_node->getDirectText(String());
+      if (raw_visible_text.empty())
+        raw_visible_text = root_node->getAccessibleName(String());
+      subtree.visible_text = clean_text(raw_visible_text);
+      if (subtree.visible_text.empty()) {
+        Vector<String> fragments;
+        for (const String& path : members) {
+          PageNode* node = index.by_path.at(path);
+          String raw_fragment = node->getDirectText(String());
+          if (raw_fragment.empty())
+            raw_fragment = node->getAccessibleName(String());
+          String fragment = clean_text(raw_fragment);
+          if (!fragment.empty() && !contains_string(fragments, fragment))
+            fragments.push_back(fragment);
+        }
+        StringBuilder joined;
+        for (wtf_size_t i = 0; i < fragments.size(); ++i) {
+          if (i) joined.Append(" | ");
+          joined.Append(fragments[i]);
+        }
+        subtree.visible_text = joined.ToString();
+      }
+      for (const String& path : members) {
+        if (!index.by_path.at(path)->getActionTypes()->empty())
+          subtree.interactive_paths.push_back(path);
+      }
+      *indexed_descendants += subtree.descendant_count;
+      indexes.push_back(std::move(subtree));
+    }
+    return indexes;
+  };
+  int added_indexed_descendants = 0;
+  int removed_indexed_descendants = 0;
+  Vector<SubtreeIndexData> subtree_indexes = build_subtree_indexes(
+      "added", after_paths, added_set, after_index, &added_indexed_descendants);
+  Vector<SubtreeIndexData> removed_subtree_indexes = build_subtree_indexes(
+      "removed", before_paths, removed_set, before_index,
+      &removed_indexed_descendants);
+  for (SubtreeIndexData& item : removed_subtree_indexes)
+    subtree_indexes.push_back(std::move(item));
+
+  auto repeated_signature_key = [&](const DiffEntryData& entry) -> String {
+    StringBuilder builder;
+    builder.Append("node|");
+    if (entry.node) {
+      CanonicalValue tag = canonical_value(entry.node, 0);
+      CanonicalValue role = canonical_value(entry.node, 1);
+      if (!canonical_empty(tag)) builder.Append(tag.text);
+      builder.Append('|');
+      if (!canonical_empty(role)) builder.Append(role.text);
+    } else {
+      builder.Append('|');
+      Vector<String> names;
+      for (const FieldChangeData& field : entry.fields) {
+        String name = field_name(field.field);
+        if (!name.empty()) names.push_back(name);
+      }
+      std::sort(names.begin(), names.end(), python_code_point_less);
+      for (const String& name : names) {
+        builder.Append('|');
+        builder.Append(name);
+      }
+    }
+    return builder.ToString();
+  };
+  auto build_repeated_indexes = [&](const String& operation,
+                                    const Vector<DiffEntryData>& entries) {
+    HashMap<String, Vector<int>> buckets;
+    for (wtf_size_t i = 0; i < entries.size(); ++i) {
+      const DiffEntryData& entry = entries[i];
+      if (entry.repeated_group_id.empty())
+        continue;
+      String key = entry.repeated_group_id + String("\x1f") +
+                   repeated_signature_key(entry);
+      buckets.insert(key, Vector<int>()).stored_value->value.push_back(i);
+    }
+    Vector<bool> consumed;
+    for (wtf_size_t i = 0; i < entries.size(); ++i)
+      consumed.push_back(false);
+    Vector<RepeatedGroupIndexData> indexes;
+    for (wtf_size_t i = 0; i < entries.size(); ++i) {
+      if (consumed[i])
+        continue;
+      const DiffEntryData& entry = entries[i];
+      if (entry.repeated_group_id.empty())
+        continue;
+      String key = entry.repeated_group_id + String("\x1f") +
+                   repeated_signature_key(entry);
+      const Vector<int>& bucket = buckets.at(key);
+      if (bucket.size() < 2)
+        continue;
+      RepeatedGroupIndexData index_data;
+      index_data.operation = operation;
+      index_data.repeated_group_id = entry.repeated_group_id;
+      index_data.count = static_cast<int>(bucket.size());
+      if (entry.node) {
+        CanonicalValue tag = canonical_value(entry.node, 0);
+        CanonicalValue role = canonical_value(entry.node, 1);
+        if (!canonical_empty(tag)) index_data.tag = tag.text;
+        if (!canonical_empty(role)) index_data.role = role.text;
+      } else {
+        for (const FieldChangeData& field : entry.fields) {
+          String name = field_name(field.field);
+          if (!name.empty()) index_data.changed_fields.push_back(name);
+        }
+        std::sort(index_data.changed_fields.begin(),
+                  index_data.changed_fields.end(), python_code_point_less);
+      }
+      for (int member : bucket) {
+        consumed[static_cast<wtf_size_t>(member)] = true;
+        const DiffEntryData& member_entry = entries[member];
+        if (member_entry.repeated_item_index.has_value())
+          index_data.item_indices.push_back(*member_entry.repeated_item_index);
+        index_data.member_paths.push_back(member_entry.path);
+      }
+      indexes.push_back(std::move(index_data));
+    }
+    return indexes;
+  };
+  Vector<RepeatedGroupIndexData> repeated_indexes =
+      build_repeated_indexes("added", added_entries);
+  Vector<RepeatedGroupIndexData> removed_repeated =
+      build_repeated_indexes("removed", removed_entries);
+  Vector<RepeatedGroupIndexData> changed_repeated =
+      build_repeated_indexes("changed", changed_entries);
+  for (RepeatedGroupIndexData& item : removed_repeated)
+    repeated_indexes.push_back(std::move(item));
+  for (RepeatedGroupIndexData& item : changed_repeated)
+    repeated_indexes.push_back(std::move(item));
+
+  struct ViewportTextRow {
+    int order = 0;
+    String text;
+  };
+  struct MovementCluster {
+    double dx = 0;
+    double dy = 0;
+    int count = 0;
+  };
+  int entered_nodes = 0;
+  int exited_nodes = 0;
+  int in_viewport_changed = 0;
+  int hit_testable_changed = 0;
+  int geometry_compared = 0;
+  int shifted_nodes = 0;
+  int dimension_changed_nodes = 0;
+  Vector<ViewportTextRow> entered_rows;
+  Vector<ViewportTextRow> exited_rows;
+  Vector<MovementCluster> movement_clusters;
+  auto viewport_membership = [](PageNode* node) -> bool {
+    if (!node->getVisible())
+      return false;
+    return node->getInViewport() || node->getHitTestable();
+  };
+  auto viewport_node_text = [&clean_text](PageNode* node) -> String {
+    String text = clean_text(node->getDirectText(String()));
+    if (!text.empty())
+      return text;
+    String role = clean_text(node->getRole(String())).ToAsciiLower();
+    String boundary =
+        clean_text(node->getSemanticBoundary(String())).ToAsciiLower();
+    bool semantic = !role.empty() || !boundary.empty() ||
+                    !node->getActionTypes()->empty() ||
+                    node->getChildRefs()->empty();
+    return semantic ? clean_text(node->getAccessibleName(String())) : String();
+  };
+  auto empty_bounds = protocol::DOM::Rect::create()
+                          .setX(0).setY(0).setWidth(0).setHeight(0).build();
+  int fallback_order = 0;
+  for (const String& path : before_paths) {
+    if (!after_set.Contains(path))
+      continue;
+    PageNode* before_node = before_index.by_path.at(path);
+    PageNode* after_node = after_index.by_path.at(path);
+    bool before_member = viewport_membership(before_node);
+    bool after_member = viewport_membership(after_node);
+    if (before_node->getInViewport() != after_node->getInViewport())
+      in_viewport_changed++;
+    if (before_node->getHitTestable() != after_node->getHitTestable())
+      hit_testable_changed++;
+    if (before_member != after_member) {
+      PageNode* selected = after_member ? after_node : before_node;
+      String text = viewport_node_text(selected);
+      int order = selected->getSourceOrder();
+      if (!order)
+        order = fallback_order;
+      if (after_member) {
+        entered_nodes++;
+        if (!text.empty()) entered_rows.push_back(ViewportTextRow{order, text});
+      } else {
+        exited_nodes++;
+        if (!text.empty()) exited_rows.push_back(ViewportTextRow{order, text});
+      }
+    }
+    if (before_node->hasBounds() && after_node->hasBounds()) {
+      protocol::DOM::Rect* before_bounds = before_node->getBounds(empty_bounds.get());
+      protocol::DOM::Rect* after_bounds = after_node->getBounds(empty_bounds.get());
+      geometry_compared++;
+      double dx = std::nearbyint((after_bounds->getX() - before_bounds->getX()) * 10.0) / 10.0;
+      double dy = std::nearbyint((after_bounds->getY() - before_bounds->getY()) * 10.0) / 10.0;
+      if (std::abs(dx) >= 0.5 || std::abs(dy) >= 0.5) {
+        shifted_nodes++;
+        bool found = false;
+        for (MovementCluster& cluster : movement_clusters) {
+          if (cluster.dx == dx && cluster.dy == dy) {
+            cluster.count++;
+            found = true;
+            break;
+          }
+        }
+        if (!found)
+          movement_clusters.push_back(MovementCluster{dx, dy, 1});
+      }
+      if (std::abs(after_bounds->getWidth() - before_bounds->getWidth()) >= 0.5 ||
+          std::abs(after_bounds->getHeight() - before_bounds->getHeight()) >= 0.5) {
+        dimension_changed_nodes++;
+      }
+    }
+    fallback_order++;
+  }
+  auto unique_viewport_text = [&](Vector<ViewportTextRow> rows) {
+    std::sort(rows.begin(), rows.end(),
+              [&](const ViewportTextRow& left, const ViewportTextRow& right) {
+                if (left.order != right.order)
+                  return left.order < right.order;
+                return python_code_point_less(left.text, right.text);
+              });
+    HashSet<String> seen;
+    Vector<String> values;
+    for (const ViewportTextRow& row : rows) {
+      String key = fold_case(clean_text(row.text));
+      if (!key.empty() && !seen.Contains(key)) {
+        seen.insert(key);
+        values.push_back(row.text);
+      }
+    }
+    return values;
+  };
+  Vector<String> entered_text = unique_viewport_text(std::move(entered_rows));
+  Vector<String> exited_text = unique_viewport_text(std::move(exited_rows));
+  bool has_viewport_delta = entered_nodes || exited_nodes ||
+      in_viewport_changed || hit_testable_changed || shifted_nodes ||
+      dimension_changed_nodes;
+  if (!movement_clusters.empty()) {
+    std::sort(movement_clusters.begin(), movement_clusters.end(),
+              [](const MovementCluster& left, const MovementCluster& right) {
+                if (left.count != right.count)
+                  return left.count > right.count;
+                double left_magnitude = std::abs(left.dx) + std::abs(left.dy);
+                double right_magnitude = std::abs(right.dx) + std::abs(right.dy);
+                if (left_magnitude != right_magnitude)
+                  return left_magnitude > right_magnitude;
+                if (left.dx != right.dx)
+                  return left.dx < right.dx;
+                return left.dy < right.dy;
+              });
+  }
+
+  auto canonical_fragment = [&](const CanonicalValue& value) -> String {
+    if (value.kind == CanonicalValue::Kind::kNull)
+      return String();
+    if (value.kind == CanonicalValue::Kind::kString)
+      return value.text.empty() ? String() : clean_text(json_quote(value.text));
+    if (value.kind == CanonicalValue::Kind::kActions && value.strings.empty())
+      return String();
+    if ((value.kind == CanonicalValue::Kind::kAttributes ||
+         value.kind == CanonicalValue::Kind::kStates) &&
+        value.pairs.empty()) {
+      return String();
+    }
+    StringBuilder builder;
+    builder.Append('[');
+    if (value.kind == CanonicalValue::Kind::kActions) {
+      for (wtf_size_t i = 0; i < value.strings.size(); ++i) {
+        if (i) builder.Append(", ");
+        builder.Append(json_quote(value.strings[i]));
+      }
+    } else {
+      for (wtf_size_t i = 0; i < value.pairs.size(); ++i) {
+        if (i) builder.Append(", ");
+        builder.Append("{\"name\": ");
+        builder.Append(json_quote(value.pairs[i].first));
+        builder.Append(", \"value\": ");
+        builder.Append(json_quote(value.pairs[i].second));
+        builder.Append('}');
+      }
+    }
+    builder.Append(']');
+    return clean_text(builder.ToString());
+  };
+  auto entry_fragment = [&](const DiffEntryData& entry) -> String {
+    Vector<String> candidates;
+    if (entry.node) {
+      candidates.push_back(clean_text(entry.node->getDirectText(String())));
+      candidates.push_back(clean_text(entry.node->getAccessibleName(String())));
+    } else {
+      const int priority_fields[] = {3, 2, 4, 5, 6};
+      for (int wanted : priority_fields) {
+        for (const FieldChangeData& change : entry.fields) {
+          if (change.field != wanted)
+            continue;
+          String after = canonical_fragment(change.after);
+          String before = canonical_fragment(change.before);
+          if (!after.empty()) candidates.push_back(after);
+          if (!before.empty()) candidates.push_back(before);
+        }
+      }
+    }
+    String fragment;
+    for (const String& candidate : candidates) {
+      if (!candidate.empty()) {
+        fragment = candidate;
+        break;
+      }
+    }
+    if (fragment.length() > 180) {
+      StringBuilder truncated_fragment;
+      truncated_fragment.Append(
+          rstrip_python_whitespace(fragment.substr(0, 179)));
+      truncated_fragment.Append(static_cast<UChar>(0x2026));
+      fragment = truncated_fragment.ToString();
+    }
+    return fragment;
+  };
+  auto code_point_at = [](const String& text, wtf_size_t offset,
+                          wtf_size_t* next) -> UChar32 {
+    UChar32 result = text[offset++];
+    if (U16_IS_LEAD(result) && offset < text.length() &&
+        U16_IS_TRAIL(text[offset])) {
+      result = U16_GET_SUPPLEMENTARY(result, text[offset++]);
+    }
+    *next = offset;
+    return result;
+  };
+  auto code_point_before = [](const String& text, wtf_size_t offset) -> UChar32 {
+    UChar32 trail = text[--offset];
+    if (U16_IS_TRAIL(trail) && offset && U16_IS_LEAD(text[offset - 1]))
+      return U16_GET_SUPPLEMENTARY(text[offset - 1], trail);
+    return trail;
+  };
+  auto is_python_word = [](UChar32 c) -> bool {
+    int8_t category = u_charType(c);
+    return c == '_' || u_isalpha(c) ||
+           category == U_DECIMAL_DIGIT_NUMBER ||
+           category == U_LETTER_NUMBER || category == U_OTHER_NUMBER;
+  };
+  auto is_python_decimal = [](UChar32 c) -> bool {
+    return u_charType(c) == U_DECIMAL_DIGIT_NUMBER;
+  };
+  auto contains_numeric = [&](const String& text) -> bool {
+    for (wtf_size_t start = 0; start < text.length();) {
+      wtf_size_t first_next = start;
+      UChar32 first = code_point_at(text, start, &first_next);
+      wtf_size_t digit_start = start;
+      if ((first == '+' || first == '-') && first_next < text.length()) {
+        digit_start = first_next;
+        wtf_size_t after_sign = digit_start;
+        first = code_point_at(text, digit_start, &after_sign);
+        if (!is_python_decimal(first)) {
+          start = first_next;
+          continue;
+        }
+      } else if (!is_python_decimal(first)) {
+        start = first_next;
+        continue;
+      }
+      if (start && is_python_word(code_point_before(text, start))) {
+        start = first_next;
+        continue;
+      }
+      wtf_size_t cursor = digit_start;
+      while (cursor < text.length()) {
+        wtf_size_t next = cursor;
+        UChar32 digit = code_point_at(text, cursor, &next);
+        if (!is_python_decimal(digit))
+          break;
+        cursor = next;
+      }
+      if (cursor == text.length())
+        return true;
+      wtf_size_t after_integer = cursor;
+      UChar32 following = code_point_at(text, cursor, &after_integer);
+      if (!is_python_word(following))
+        return true;
+      start = first_next;
+    }
+    return false;
+  };
+  auto entry_has_field = [](const DiffEntryData& entry, int field) -> bool {
+    for (const FieldChangeData& change : entry.fields)
+      if (change.field == field) return true;
+    return false;
+  };
+  struct EntrySortKey {
+    wtf_size_t index = 0;
+    int score = 0;
+    bool has_text = false;
+    bool has_numeric = false;
+    bool has_state_or_action = false;
+    String path;
+  };
+  auto sort_entries = [&](Vector<DiffEntryData>* entries) {
+    Vector<EntrySortKey> keys;
+    for (wtf_size_t i = 0; i < entries->size(); ++i) {
+      const DiffEntryData& entry = (*entries)[i];
+      String fragment = entry_fragment(entry);
+      bool has_action = (entry.node && !entry.node->getActionTypes()->empty()) ||
+                        entry_has_field(entry, 6);
+      bool has_state = (entry.node && !entry.node->getStates()->empty()) ||
+                       entry_has_field(entry, 5);
+      bool has_numeric = contains_numeric(fragment);
+      bool has_text = !fragment.empty();
+      int score = (has_action ? 8 : 0) + (has_state ? 6 : 0) +
+                  (has_numeric ? 4 : 0) + (has_text ? 2 : 0);
+      keys.push_back(EntrySortKey{i, score, has_text, has_numeric,
+                                  has_state || has_action, entry.path});
+    }
+    std::stable_sort(keys.begin(), keys.end(),
+                     [&](const EntrySortKey& left, const EntrySortKey& right) {
+                       if (left.score != right.score)
+                         return left.score > right.score;
+                       if (left.has_text != right.has_text)
+                         return left.has_text;
+                       if (left.has_numeric != right.has_numeric)
+                         return left.has_numeric;
+                       if (left.has_state_or_action != right.has_state_or_action)
+                         return left.has_state_or_action;
+                       return python_code_point_less(left.path, right.path);
+                     });
+    Vector<DiffEntryData> ordered;
+    for (const EntrySortKey& key : keys)
+      ordered.push_back(std::move((*entries)[key.index]));
+    *entries = std::move(ordered);
+  };
+  sort_entries(&added_entries);
+  sort_entries(&removed_entries);
+  sort_entries(&changed_entries);
+
+  auto diff_entry_value = [&](const DiffEntryData& data) {
+    auto entry = protocol::ChromiumRL::StructuredDiffEntry::create()
+                     .setKind("node")
+                     .setPath(data.path)
+                     .setSemantic(data.semantic)
+                     .build();
+    if (data.node)
+      entry->setNode(append_compared_node(data.node));
+    if (!data.fields.empty()) {
+      auto fields = protocol::ChromiumRL::StructuredFieldChanges::create().build();
+      for (const FieldChangeData& data_field : data.fields) {
+        auto change = protocol::ChromiumRL::StructuredValueChange::create()
+                          .setBefore(canonical_protocol_value(data_field.before))
+                          .setAfter(canonical_protocol_value(data_field.after))
+                          .build();
+        switch (data_field.field) {
+          case 0: fields->setTag(std::move(change)); break;
+          case 1: fields->setRole(std::move(change)); break;
+          case 2: fields->setAccessibleName(std::move(change)); break;
+          case 3: fields->setDirectText(std::move(change)); break;
+          case 4: fields->setSelectedAttributes(std::move(change)); break;
+          case 5: fields->setStates(std::move(change)); break;
+          case 6: fields->setActionTypes(std::move(change)); break;
+          case 7: fields->setSemanticBoundary(std::move(change)); break;
+        }
+      }
+      entry->setFields(std::move(fields));
+    }
+    if (!data.repeated_group_id.empty())
+      entry->setRepeated_group_id(data.repeated_group_id);
+    if (data.repeated_item_index.has_value())
+      entry->setRepeated_item_index(*data.repeated_item_index);
+    return entry;
+  };
+  auto added_values = std::make_unique<
+      protocol::Array<protocol::ChromiumRL::StructuredDiffEntry>>();
+  auto removed_values = std::make_unique<
+      protocol::Array<protocol::ChromiumRL::StructuredDiffEntry>>();
+  auto changed_values = std::make_unique<
+      protocol::Array<protocol::ChromiumRL::StructuredDiffEntry>>();
+  for (const DiffEntryData& entry : added_entries)
+    added_values->push_back(diff_entry_value(entry));
+  for (const DiffEntryData& entry : removed_entries)
+    removed_values->push_back(diff_entry_value(entry));
+  for (const DiffEntryData& entry : changed_entries)
+    changed_values->push_back(diff_entry_value(entry));
+
+  auto subtree_values = std::make_unique<
+      protocol::Array<protocol::ChromiumRL::StructuredSubtreeIndex>>();
+  double max_collapse_percent = 0;
+  Vector<String> collapse_root_summaries;
+  auto python_float_string = [](double value) -> String {
+    String result = String::Number(value);
+    if (std::floor(value) == value)
+      result = result + ".0";
+    return result;
+  };
+  for (const SubtreeIndexData& data : subtree_indexes) {
+    auto members = std::make_unique<protocol::Array<String>>();
+    for (const String& path : data.member_paths) members->push_back(path);
+    auto interactive = std::make_unique<protocol::Array<String>>();
+    for (const String& path : data.interactive_paths) interactive->push_back(path);
+    subtree_values->push_back(protocol::ChromiumRL::StructuredSubtreeIndex::create()
+        .setOperation(data.operation)
+        .setRoot_path(data.root_path)
+        .setMember_paths(std::move(members))
+        .setDescendant_count(data.descendant_count)
+        .setSubtree_node_count(data.subtree_node_count)
+        .setDocument_percent(data.document_percent)
+        .setVisible_text(data.visible_text)
+        .setInteractive_paths(std::move(interactive))
+        .build());
+    max_collapse_percent = std::max(max_collapse_percent, data.document_percent);
+    collapse_root_summaries.push_back(
+        "operation=" + data.operation + " path=" + data.root_path +
+        " descendant_count=" + String::Number(data.descendant_count) +
+        " document_percent=" + python_float_string(data.document_percent));
+  }
+  auto repeated_values = std::make_unique<
+      protocol::Array<protocol::ChromiumRL::StructuredRepeatedGroupIndex>>();
+  int repeated_group_members_indexed = 0;
+  for (const RepeatedGroupIndexData& data : repeated_indexes) {
+    auto changed_fields = std::make_unique<protocol::Array<String>>();
+    for (const String& field : data.changed_fields) changed_fields->push_back(field);
+    auto signature = protocol::ChromiumRL::StructuredRepeatedSignature::create()
+        .setChanged_fields(std::move(changed_fields))
+        .setKind("node")
+        .setRole(data.role.empty() ? null_value() : string_value(data.role))
+        .setTag(data.tag.empty() ? null_value() : string_value(data.tag))
+        .build();
+    auto indices = std::make_unique<protocol::Array<int>>();
+    for (int value : data.item_indices) indices->push_back(value);
+    auto paths = std::make_unique<protocol::Array<String>>();
+    for (const String& path : data.member_paths) paths->push_back(path);
+    repeated_values->push_back(
+        protocol::ChromiumRL::StructuredRepeatedGroupIndex::create()
+            .setOperation(data.operation)
+            .setRepeated_group_id(data.repeated_group_id)
+            .setSignature(std::move(signature))
+            .setCount(data.count)
+            .setItem_indices(std::move(indices))
+            .setMember_paths(std::move(paths))
+            .build());
+    repeated_group_members_indexed += data.count;
+  }
+  auto indexes_value = protocol::ChromiumRL::StructuredDiffIndexes::create()
+      .setSubtrees(std::move(subtree_values))
+      .setRepeated_groups(std::move(repeated_values))
+      .build();
+  auto payload = protocol::ChromiumRL::StructuredDiffPayload::create().build();
+  payload->setAdded(std::move(added_values));
+  payload->setRemoved(std::move(removed_values));
+  payload->setChanged(std::move(changed_values));
+  payload->setIndexes(std::move(indexes_value));
+
+  int viewport_change_count =
+      static_cast<int>(entered_text.size() + exited_text.size());
+  if (has_viewport_delta) {
+    auto entered_values = std::make_unique<protocol::Array<String>>();
+    for (const String& value : entered_text) entered_values->push_back(value);
+    auto exited_values = std::make_unique<protocol::Array<String>>();
+    for (const String& value : exited_text) exited_values->push_back(value);
+    std::unique_ptr<protocol::Value> dominant = null_value();
+    if (!movement_clusters.empty()) {
+      const MovementCluster& cluster = movement_clusters.front();
+      auto dominant_value = protocol::DictionaryValue::create();
+      dominant_value->setDouble("delta_x", cluster.dx);
+      dominant_value->setDouble("delta_y", cluster.dy);
+      dominant_value->setInteger("matched_nodes", cluster.count);
+      dominant_value->setDouble(
+          "share_of_shifted_nodes_percent",
+          std::nearbyint((static_cast<double>(cluster.count) / shifted_nodes) *
+                         10000.0) / 100.0);
+      dominant = std::move(dominant_value);
+    }
+    auto viewport = protocol::ChromiumRL::StructuredViewportDelta::create()
+        .setAggregation("structured_snapshot_viewport_flags_and_dominant_geometry_shift")
+        .setViewport_state(protocol::ChromiumRL::StructuredViewportState::create()
+            .setEntered_nodes(entered_nodes)
+            .setExited_nodes(exited_nodes)
+            .setIn_viewport_changed_nodes(in_viewport_changed)
+            .setHit_testable_changed_nodes(hit_testable_changed)
+            .setEntered_text_total(static_cast<int>(entered_text.size()))
+            .setExited_text_total(static_cast<int>(exited_text.size()))
+            .build())
+        .setGeometry(protocol::ChromiumRL::StructuredViewportGeometry::create()
+            .setCompared_nodes(geometry_compared)
+            .setShifted_nodes(shifted_nodes)
+            .setStationary_nodes(std::max(0, geometry_compared - shifted_nodes))
+            .setDimension_changed_nodes(dimension_changed_nodes)
+            .setMovement_clusters_total(static_cast<int>(movement_clusters.size()))
+            .setDominant_shift(std::move(dominant))
+            .setPer_node_geometry_emitted(false)
+            .build())
+        .setVisible_text_entered(std::move(entered_values))
+        .setVisible_text_exited(std::move(exited_values))
+        .build();
+    payload->setViewport_delta(std::move(viewport));
+  }
+
+  int semantic_changes = static_cast<int>(added_set.size() + removed_set.size() +
+                                           changed_entries.size());
+  int total_changes = semantic_changes + viewport_change_count;
+  int semantic_entry_count = 0;
+  int structural_entry_count = 0;
+  auto count_semantics = [&](const Vector<DiffEntryData>& entries) {
+    for (const DiffEntryData& entry : entries) {
+      if (entry.semantic) semantic_entry_count++;
+      else structural_entry_count++;
+    }
+  };
+  count_semantics(added_entries);
+  count_semantics(removed_entries);
+  count_semantics(changed_entries);
+  String status = semantic_changes ? "changes_present" : "no_dom_change";
+  if (!semantic_changes && viewport_change_count)
+    status = "viewport_content_changed";
+  else if (!total_changes && action_type.has_value() &&
+           action_type->ToAsciiLower() == "scroll")
+    status = "no_semantic_change_scroll";
+
+  auto totals = protocol::ChromiumRL::StructuredDiffCounts::create().build();
+  totals->setAdded(static_cast<int>(added_set.size()));
+  totals->setRemoved(static_cast<int>(removed_set.size()));
+  totals->setChanged(static_cast<int>(changed_entries.size()));
+  totals->setSemantic_changes(semantic_changes);
+  totals->setViewport_text_changed(viewport_change_count);
+  totals->setChanges(total_changes);
+  auto emitted = protocol::ChromiumRL::StructuredDiffCounts::create().build();
+  emitted->setAdded(static_cast<int>(added_entries.size()));
+  emitted->setRemoved(static_cast<int>(removed_entries.size()));
+  emitted->setChanged(static_cast<int>(changed_entries.size()));
+  emitted->setSemantic_entry_count(semantic_entry_count);
+  emitted->setStructural_entry_count(structural_entry_count);
+  emitted->setViewport_text_changed(viewport_change_count);
+  emitted->setChanges(static_cast<int>(added_entries.size() +
+      removed_entries.size() + changed_entries.size()) + viewport_change_count);
+  auto emitted_before = protocol::ChromiumRL::StructuredOperationCounts::create()
+      .setAdded(static_cast<int>(added_entries.size()))
+      .setRemoved(static_cast<int>(removed_entries.size()))
+      .setChanged(static_cast<int>(changed_entries.size()))
+      .build();
+  auto entries_truncated = protocol::ChromiumRL::StructuredOperationCounts::create()
+      .setAdded(0).setRemoved(0).setChanged(0).build();
+  auto dropped_entries = std::make_unique<
+      protocol::Array<protocol::ChromiumRL::StructuredDroppedEntry>>();
+  auto collapse_roots = std::make_unique<protocol::Array<String>>();
+  for (const String& value : collapse_root_summaries)
+    collapse_roots->push_back(value);
+  auto compression = protocol::ChromiumRL::StructuredDiffCompression::create()
+      .setSubtree_text_changes_ignored(subtree_text_changes_ignored)
+      .setRaw_added_before_relocation_match(raw_added_before_relocation_match)
+      .setRaw_removed_before_relocation_match(raw_removed_before_relocation_match)
+      .setRelocated_nodes_suppressed(relocated_nodes_suppressed)
+      .setRelocation_matching("structural_nearest_within_semantic_fingerprint")
+      .setNoise_nodes_skipped(0)
+      .setCollapsed_descendants(0)
+      .setSubtree_indexed_descendants(added_indexed_descendants +
+                                      removed_indexed_descendants)
+      .setRepeated_group_members_condensed(0)
+      .setRepeated_group_members_indexed(repeated_group_members_indexed)
+      .setEmitted_before_truncation(std::move(emitted_before))
+      .setEntries_truncated(std::move(entries_truncated))
+      .setEntry_limit(null_value())
+      .setTruncation_selection("none_all_compared_entries_emitted")
+      .setDropped_entries(std::move(dropped_entries))
+      .setMax_collapse_document_percent(max_collapse_percent)
+      .setCollapse_roots(std::move(collapse_roots))
+      .build();
+
+  auto result = protocol::ChromiumRL::StructuredSnapshotDiff::create()
+      .setSource("runner_snapshot_diff")
+      .setInterval("before_snapshot_to_after_snapshot")
+      .setAction_type(action_type.has_value() ? string_value(*action_type)
+                                              : null_value())
+      .setGeometry_excluded(true)
+      .setCovers_live_control_state(false)
+      .setIdentity(std::move(identity))
+      .setStatus(status)
+      .setBefore(endpoint_value(before_snapshot))
+      .setAfter(endpoint_value(after_snapshot))
+      .setChange_count(total_changes)
+      .setSemantic_change_count(semantic_changes)
+      .setViewport_change_count(viewport_change_count)
+      .setTotals(std::move(totals))
+      .setEmitted_counts(std::move(emitted))
+      .setCompression(std::move(compression))
+      .setDiff(std::move(payload))
+      .build();
+  *out = std::move(result);
+  return protocol::Response::Success();
+}
+
+protocol::Response InspectorChromiumRLAgent::compareStructuredSnapshots(
+    std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot> before_snapshot,
+    std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot> after_snapshot,
+    std::optional<String> action_type,
+    std::unique_ptr<protocol::ChromiumRL::StructuredSnapshotDiff>* diff) {
+  return BuildStructuredSnapshotDiff(before_snapshot.get(), after_snapshot.get(),
+                                     action_type, diff);
+}
+
+protocol::Response InspectorChromiumRLAgent::captureSnapshotDiff(
+    std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot> before_snapshot,
+    std::optional<String> action_type,
+    std::optional<bool> in_viewport_only,
+    std::optional<String> root_selector,
+    std::optional<int> max_nodes,
+    std::optional<int> max_text_chars,
+    std::optional<bool> include_offscreen,
+    std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot>* after_snapshot,
+    std::unique_ptr<protocol::ChromiumRL::StructuredSnapshotDiff>* diff) {
+  std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot> captured_after;
+  protocol::Response capture_response = captureStructuredSnapshot(
+      in_viewport_only, root_selector, max_nodes, max_text_chars,
+      include_offscreen, false, false, &captured_after);
+  if (!capture_response.IsSuccess())
+    return capture_response;
+  protocol::Response diff_response = BuildStructuredSnapshotDiff(
+      before_snapshot.get(), captured_after.get(), action_type, diff);
+  if (!diff_response.IsSuccess())
+    return diff_response;
+  *after_snapshot = std::move(captured_after);
+  return protocol::Response::Success();
+}
 
 }  // namespace blink

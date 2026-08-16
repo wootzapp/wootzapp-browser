@@ -134,6 +134,27 @@ experimental domain ChromiumRL
     returns
       StructuredPageSnapshot snapshot
 
+  command compareStructuredSnapshots
+    parameters
+      StructuredPageSnapshot beforeSnapshot
+      StructuredPageSnapshot afterSnapshot
+      optional string actionType
+    returns
+      StructuredSnapshotDiff diff
+
+  command captureSnapshotDiff
+    parameters
+      StructuredPageSnapshot beforeSnapshot
+      optional string actionType
+      optional boolean inViewportOnly
+      optional string rootSelector
+      optional integer maxNodes
+      optional integer maxTextChars
+      optional boolean includeOffscreen
+    returns
+      StructuredPageSnapshot afterSnapshot
+      StructuredSnapshotDiff diff
+
   # Start tracking DOM differences. The first call will report the initial state.
   command startDOMDiff
   
@@ -703,6 +724,254 @@ experimental domain ChromiumRL
       integer droppedOffscreen
       integer droppedDuplicate
       boolean truncated
+
+
+
+  type StructuredSnapshotDiffEndpoint extends object
+    properties
+      string snapshot_id
+      any document_revision
+      string url
+
+  type StructuredSnapshotIdentityStats extends object
+    properties
+      integer nodes
+      integer anchored_nodes
+      integer positional_nodes
+      integer duplicate_anchor_bases
+      integer duplicate_anchor_nodes
+      integer path_collisions
+
+  type StructuredSnapshotIdentity extends object
+    properties
+      string strategy
+      StructuredSnapshotIdentityStats before
+      StructuredSnapshotIdentityStats after
+
+  type StructuredComparedNode extends object
+    properties
+      optional string tag
+      optional string role
+      optional string accessibleName
+      optional string directText
+      optional array of NodeAttribute selectedAttributes
+      optional array of NodeState states
+      optional array of string actionTypes
+      optional string semanticBoundary
+
+  type StructuredValueChange extends object
+    properties
+      any before
+      any after
+
+  type StructuredFieldChanges extends object
+    properties
+      optional StructuredValueChange tag
+      optional StructuredValueChange role
+      optional StructuredValueChange accessibleName
+      optional StructuredValueChange directText
+      optional StructuredValueChange selectedAttributes
+      optional StructuredValueChange states
+      optional StructuredValueChange actionTypes
+      optional StructuredValueChange semanticBoundary
+
+  type StructuredDiffEntry extends object
+    properties
+      string kind
+      string path
+      boolean semantic
+      optional StructuredComparedNode node
+      optional StructuredFieldChanges fields
+      optional string repeated_group_id
+      optional integer repeated_item_index
+
+  type StructuredSubtreeIndex extends object
+    properties
+      string operation
+      string root_path
+      array of string member_paths
+      integer descendant_count
+      integer subtree_node_count
+      number document_percent
+      string visible_text
+      array of string interactive_paths
+
+  type StructuredRepeatedSignature extends object
+    properties
+      array of string changed_fields
+      string kind
+      any role
+      any tag
+
+  type StructuredRepeatedGroupIndex extends object
+    properties
+      string operation
+      string repeated_group_id
+      StructuredRepeatedSignature signature
+      integer count
+      array of integer item_indices
+      array of string member_paths
+
+  type StructuredDiffIndexes extends object
+    properties
+      array of StructuredSubtreeIndex subtrees
+      array of StructuredRepeatedGroupIndex repeated_groups
+
+  type StructuredViewportState extends object
+    properties
+      integer entered_nodes
+      integer exited_nodes
+      integer in_viewport_changed_nodes
+      integer hit_testable_changed_nodes
+      integer entered_text_total
+      integer exited_text_total
+
+  type StructuredViewportGeometry extends object
+    properties
+      integer compared_nodes
+      integer shifted_nodes
+      integer stationary_nodes
+      integer dimension_changed_nodes
+      integer movement_clusters_total
+      any dominant_shift
+      boolean per_node_geometry_emitted
+
+  type StructuredViewportDelta extends object
+    properties
+      string aggregation
+      StructuredViewportState viewport_state
+      StructuredViewportGeometry geometry
+      array of string visible_text_entered
+      array of string visible_text_exited
+
+  type StructuredNavigation extends object
+    properties
+      string from
+      string to
+
+  type StructuredTruncatedCounts extends object
+    properties
+      integer removed
+      integer added
+
+  type StructuredNavigationTextDelta extends object
+    properties
+      array of string removed
+      array of string added
+      integer removed_total
+      integer added_total
+      StructuredTruncatedCounts truncated
+
+  type StructuredCollisionNode extends object
+    properties
+      any ref
+      any parentRef
+      any childRefs
+      optional string tag
+      optional string role
+      optional string accessibleName
+      optional string directText
+      optional array of NodeAttribute selectedAttributes
+      optional array of NodeState states
+      optional array of string actionTypes
+      optional string semanticBoundary
+
+  type StructuredIdentityProblem extends object
+    properties
+      string kind
+      optional string ref
+      optional string parent_ref
+      optional string child_ref
+      optional array of string child_refs
+      optional string path
+      optional string existing_path
+      array of StructuredCollisionNode nodes
+
+  type StructuredIdentityError extends object
+    properties
+      string side
+      string message
+      array of StructuredIdentityProblem problems
+
+  type StructuredDiffPayload extends object
+    properties
+      optional array of StructuredDiffEntry added
+      optional array of StructuredDiffEntry removed
+      optional array of StructuredDiffEntry changed
+      optional StructuredDiffIndexes indexes
+      optional StructuredViewportDelta viewport_delta
+      optional StructuredNavigation navigation
+      optional integer removed_node_count
+      optional integer added_node_count
+      optional StructuredNavigationTextDelta text_delta
+      optional array of StructuredIdentityError errors
+
+  type StructuredDiffCounts extends object
+    properties
+      optional integer added
+      optional integer removed
+      optional integer changed
+      optional integer semantic_changes
+      optional integer removed_nodes
+      optional integer added_nodes
+      optional integer removed_text
+      optional integer added_text
+      optional integer semantic_entry_count
+      optional integer structural_entry_count
+      optional integer viewport_text_changed
+      optional integer changes
+
+  type StructuredOperationCounts extends object
+    properties
+      integer added
+      integer removed
+      integer changed
+
+  type StructuredDroppedEntry extends object
+    properties
+      string operation
+      string kind
+      array of string paths
+      string text_fragment
+
+  type StructuredDiffCompression extends object
+    properties
+      integer subtree_text_changes_ignored
+      integer raw_added_before_relocation_match
+      integer raw_removed_before_relocation_match
+      integer relocated_nodes_suppressed
+      string relocation_matching
+      integer noise_nodes_skipped
+      integer collapsed_descendants
+      integer subtree_indexed_descendants
+      integer repeated_group_members_condensed
+      integer repeated_group_members_indexed
+      StructuredOperationCounts emitted_before_truncation
+      StructuredOperationCounts entries_truncated
+      any entry_limit
+      string truncation_selection
+      array of StructuredDroppedEntry dropped_entries
+      number max_collapse_document_percent
+      array of string collapse_roots
+
+  type StructuredSnapshotDiff extends object
+    properties
+      string source
+      string interval
+      any action_type
+      boolean geometry_excluded
+      boolean covers_live_control_state
+      optional StructuredSnapshotIdentity identity
+      string status
+      StructuredSnapshotDiffEndpoint before
+      StructuredSnapshotDiffEndpoint after
+      integer change_count
+      optional integer semantic_change_count
+      optional integer viewport_change_count
+      StructuredDiffCounts totals
+      StructuredDiffCounts emitted_counts
+      optional StructuredDiffCompression compression
+      StructuredDiffPayload diff
 
   type StructuredPageSnapshot extends object
     properties
