@@ -15,6 +15,13 @@ services:
       VNC_SCREEN: ${VNC_SCREEN:-1366x900x24}
       CHROMIUM_START_URL: ${CHROMIUM_START_URL:-about:blank}
       CHROMIUM_EXTRA_ARGS: ${CHROMIUM_EXTRA_ARGS:-}
+      AGENT_BROWSER_CDP_TARGET: ${AGENT_BROWSER_CDP_TARGET:-9222}
+      AGENT_BROWSER_MAX_STEPS: ${AGENT_BROWSER_MAX_STEPS:-20}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      AI_GATEWAY_MODEL: ${AI_GATEWAY_MODEL:-}
+      AI_GATEWAY_URL: ${AI_GATEWAY_URL:-}
     healthcheck:
       test: ["CMD", "chromium-runtime-entrypoint", "status", "--quiet"]
       interval: 15s

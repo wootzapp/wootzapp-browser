@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "name": "wootzapp-agent-browser-runtime",
+  "description": "Optional desktop agent-browser runtime for Wootz Chromium.",
+  "type": "module",
+  "dependencies": {
+    "agent-browser": "0.27.3",
+    "openai": "7.4.0"
+  }
+}

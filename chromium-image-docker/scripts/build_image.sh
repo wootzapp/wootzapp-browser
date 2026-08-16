@@ -18,7 +18,7 @@ du -sh "${BUILD_DIR}"
 cd "${IMAGE_DIR}"
 DOCKER_BUILDKIT=1 docker build \
   --tag "${IMAGE_NAME}" \
-  --file Dockerfile \
+  --file chromium-image-docker/Dockerfile \
   .
 
 echo "Built ${IMAGE_NAME}"
