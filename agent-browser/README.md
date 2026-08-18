@@ -1,53 +1,94 @@
-# Optional agent-browser runtime
+# Standalone agent-browser runner
 
-This directory adds an optional `agent-browser` task runner to the Wootz Chromium desktop browser image.
+This directory provides an optional agent-browser runner for Wootzapp Desktop Browser.
 
-The desktop browser starts normally. `agent-browser` is available inside the running browser container for users or tools that want model-driven browser task execution. It is not started automatically and does not change the normal browser runtime.
+It does not start the browser and it is not part of the normal browser Docker runtime. The browser must already be running. agent-browser connects to that running browser through the browser's CDP endpoint.
 
-## Configuration
+## How it connects
 
-Copy the example environment file and fill in the credentials at runtime:
+The normal browser Docker flow starts the browser container and exposes CDP on the host.
+
+Default host CDP endpoint:
+
+```text
+http://127.0.0.1:9222
+```
+
+agent-browser attaches to that endpoint and sends browser actions through CDP.
+
+```text
+running browser container -> CDP 9222 -> standalone agent-browser
+```
+
+## Install dependencies
+
+From the repository root:
 
 ```bash
-cp agent-browser/.env.example .env.agent-browser
+cd agent-browser
+npm install
 ```
 
-At least one model provider key is required for task mode. OpenAI is supported through:
+## Configure credentials
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env.agent-browser
+```
+
+Set at least:
 
 ```env
-OPENAI_API_KEY=
+OPENAI_API_KEY=your_key_here
 OPENAI_MODEL=gpt-4o
-```
-
-The task runner connects to the desktop browser through the container-local CDP target:
-
-```env
-AGENT_BROWSER_CDP_TARGET=9222
+AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222
 ```
 
 Do not commit real API keys.
 
-## Usage
+## Start the browser
 
-Start the desktop browser image with the environment file:
-
-```bash
-docker compose --env-file .env.agent-browser up -d
-```
-
-Run a natural-language browser task inside the same container:
+Start Wootzapp Desktop Browser through the normal Docker runtime:
 
 ```bash
-docker compose --env-file .env.agent-browser exec wootzapp-chromium-desktop \
-  agent-browser task "go to https://example.com and summarize the page"
+cd chromium-image-docker
+docker compose up -d
 ```
 
-The task runner observes the page, asks the configured model for the next browser action, executes the action against the existing Wootz Chromium desktop browser, and repeats until the task is complete or `AGENT_BROWSER_MAX_STEPS` is reached.
+Check that CDP is reachable:
 
-## Notes
+```bash
+curl http://127.0.0.1:9222/json/version
+```
 
-The upstream source repository is not vendored into this image. Package dependencies are pinned through `package.json` and `package-lock.json` for reproducible image builds.
+## Run a task
 
-Do not bake API keys into the image. Provide them at runtime through an env file, Compose environment, or Docker exec environment.
+From the repository root:
 
-Do not use browser shutdown as routine cleanup for task execution. Stop the Docker container through the normal Docker workflow when you want to shut down the browser.
+```bash
+cd agent-browser
+set -a
+. ./.env.agent-browser
+set +a
+node ./bin/agent-browser-desktop.mjs task "go to https://example.com and summarize the page"
+```
+
+Or run directly with environment variables:
+
+```bash
+cd agent-browser
+OPENAI_API_KEY="$OPENAI_API_KEY" OPENAI_MODEL=gpt-4o AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222 node ./bin/agent-browser-desktop.mjs task "go to https://example.com and summarize the page"
+```
+
+## What happens
+
+The task runner:
+
+1. connects to the already-running browser through CDP
+2. takes a browser snapshot
+3. sends the snapshot and task instruction to the configured model
+4. executes one browser action through agent-browser core
+5. repeats until the task is complete or the step limit is reached
+
+Normal browser usage is unchanged. agent-browser only runs when explicitly invoked.

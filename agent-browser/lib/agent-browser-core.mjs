@@ -1,11 +1,23 @@
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 export function coreCommand() {
-  return process.env.AGENT_BROWSER_CORE_COMMAND || '/usr/local/bin/agent-browser-core';
+  if (process.env.AGENT_BROWSER_CORE_COMMAND) {
+    return process.env.AGENT_BROWSER_CORE_COMMAND;
+  }
+  const localCommand = resolve(here, '../node_modules/.bin/agent-browser');
+  if (existsSync(localCommand)) {
+    return localCommand;
+  }
+  return 'agent-browser';
 }
 
 export function cdpTarget() {
-  return process.env.AGENT_BROWSER_CDP_TARGET || process.env.AGENT_BROWSER_CDP_URL || '9222';
+  return process.env.AGENT_BROWSER_CDP_TARGET || process.env.AGENT_BROWSER_CDP_URL || 'http://127.0.0.1:9222';
 }
 
 export function runCore(args, { json = true, allowFailure = false } = {}) {
@@ -24,7 +36,7 @@ export function runCore(args, { json = true, allowFailure = false } = {}) {
     throw result.error;
   }
   if (result.status !== 0 && !allowFailure) {
-    throw new Error(stderr || stdout || `agent-browser-core exited with status ${result.status}`);
+    throw new Error(stderr || stdout || `agent-browser core exited with status ${result.status}`);
   }
   if (!json) {
     return stdout;
@@ -32,7 +44,7 @@ export function runCore(args, { json = true, allowFailure = false } = {}) {
   try {
     return JSON.parse(stdout);
   } catch (error) {
-    throw new Error(`agent-browser-core returned invalid JSON: ${stdout.slice(0, 2000)}`);
+    throw new Error(`agent-browser core returned invalid JSON: ${stdout.slice(0, 2000)}`);
   }
 }
 
