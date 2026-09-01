@@ -8,6 +8,7 @@
 #include <cmath>
 #include <algorithm>
 #include "base/base64.h"
+#include "base/no_destructor.h"
 #include "crypto/sha2.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_mutation_observer_init.h"
 #include "third_party/blink/renderer/core/dom/mutation_record.h"
@@ -47,12 +48,17 @@
 #include "third_party/blink/renderer/core/html/forms/html_text_area_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_option_element.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/core/html/parser/html_entity_parser.h"
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/accessibility/ax_utilities_generated.h"
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/hit_test_request.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
+#include "third_party/blink/renderer/platform/text/segmented_string.h"
+#include "third_party/blink/renderer/platform/wtf/text/case_map.h"
+#include "third_party/icu/source/common/unicode/uchar.h"
+#include "third_party/re2/src/re2/re2.h"
 #include "ui/accessibility/ax_enums.mojom-blink.h"
 
 namespace blink {
@@ -4237,6 +4243,1801 @@ protocol::Response InspectorChromiumRLAgent::getAgentObservation(
     }
   }
 
+  return protocol::Response::Success();
+}
+
+
+namespace {
+
+// Browser-side port of scripts/render_chromiumrl_snapshot_model.py. It
+// consumes only the supplied protocol object and never reads or mutates the
+// live document.
+class StructuredModelDOMRenderer {
+ public:
+  using Node = protocol::ChromiumRL::PageNode;
+
+  explicit StructuredModelDOMRenderer(
+      protocol::ChromiumRL::StructuredPageSnapshot* snapshot)
+      : snapshot_(snapshot) {
+    if (!snapshot_)
+      return;
+    for (const auto& owned_node : *snapshot_->getNodes()) {
+      Node* node = owned_node.get();
+      nodes_.push_back(node);
+      by_ref_.Set(node->getRef(), node);
+      if (node->hasParentRef()) {
+        children_.insert(node->getParentRef(String()), Vector<Node*>())
+            .stored_value->value.push_back(node);
+      }
+    }
+    for (auto& entry : children_) {
+      std::stable_sort(entry.value.begin(), entry.value.end(),
+                       [](Node* left, Node* right) {
+                         return left->getSourceOrder() <
+                                right->getSourceOrder();
+                       });
+
+      HashMap<String, Vector<Node*>> by_signature;
+      for (Node* child : entry.value) {
+        String semantic = child->hasSemanticBoundary()
+                              ? PythonLower(Clean(
+                                    child->getSemanticBoundary(String()), false))
+                              : String();
+        String signature = NodeTag(child) + "\n" + NodeRole(child) + "\n" +
+                           semantic;
+        by_signature.insert(signature, Vector<Node*>())
+            .stored_value->value.push_back(child);
+      }
+      for (const auto& repeated : by_signature) {
+        if (repeated.value.size() < 2)
+          continue;
+        for (Node* child : repeated.value)
+          repeated_item_refs_.insert(child->getRef());
+      }
+    }
+    BuildActionNodes();
+    for (const ActionRow& row : action_nodes_) {
+      if (row.actions.size() == 1 && row.actions[0] == "scroll")
+        continue;
+      if (IsBroadAction(row.node, row.actions))
+        continue;
+      String key = NormKey(Text(row.node));
+      if (!key.empty())
+        action_labels_.insert(key);
+    }
+    GroupNestedActions();
+  }
+
+  std::unique_ptr<protocol::ChromiumRL::ModelDOM> Render();
+
+ private:
+  static constexpr int kMaxActions = 80;
+  static constexpr int kMaxSecondaryActions = 160;
+  static constexpr int kMaxNestedActions = 8;
+  static constexpr int kMaxTableRows = 60;
+  static constexpr int kMaxMedia = 60;
+  static constexpr int kMaxScrollRegions = 16;
+  static constexpr int kMaxCellChars = 180;
+  static constexpr int kMaxTextChars = 0;
+  static constexpr int kChromeLabelMaxChars = 40;
+  static constexpr bool kIncludeSecondary = true;
+  static constexpr bool kIncludeOffscreenContent = true;
+
+  struct ActionRow {
+    Node* node = nullptr;
+    Vector<String> actions;
+  };
+
+  struct ParsedMessage {
+    String author;
+    String time;
+    String text;
+    String thread;
+    String reactions;
+  };
+
+  struct ScrollRegionRow {
+    double area = 0;
+    Node* node = nullptr;
+  };
+
+  static bool IsPythonWhitespace(UChar c) {
+    return (c >= 0x0009 && c <= 0x000d) ||
+           (c >= 0x001c && c <= 0x0020) || c == 0x0085 || c == 0x00a0 ||
+           c == 0x1680 || (c >= 0x2000 && c <= 0x200a) ||
+           c == 0x2028 || c == 0x2029 || c == 0x202f || c == 0x205f ||
+           c == 0x3000;
+  }
+
+  static UChar32 CodePointAt(const String& text,
+                             wtf_size_t offset,
+                             wtf_size_t* next) {
+    UChar32 result = text[offset++];
+    if (U16_IS_LEAD(result) && offset < text.length() &&
+        U16_IS_TRAIL(text[offset])) {
+      result = U16_GET_SUPPLEMENTARY(result, text[offset++]);
+    }
+    *next = offset;
+    return result;
+  }
+
+  static UChar32 CodePointBefore(const String& text, wtf_size_t offset) {
+    UChar32 result = text[--offset];
+    if (U16_IS_TRAIL(result) && offset > 0 && U16_IS_LEAD(text[offset - 1]))
+      result = U16_GET_SUPPLEMENTARY(text[offset - 1], result);
+    return result;
+  }
+
+  static bool IsPythonWord(UChar32 value) {
+    return value == '_' || u_isalnum(value);
+  }
+
+  static bool ContainsPythonDigit(const String& text) {
+    for (wtf_size_t offset = 0; offset < text.length();) {
+      wtf_size_t next = offset;
+      UChar32 value = CodePointAt(text, offset, &next);
+      offset = next;
+      int numeric_type =
+          u_getIntPropertyValue(value, UCHAR_NUMERIC_TYPE);
+      if (numeric_type == U_NT_DECIMAL || numeric_type == U_NT_DIGIT)
+        return true;
+    }
+    return false;
+  }
+
+  static bool IsAttachmentBoundaryCharacter(UChar32 value) {
+    return IsPythonWord(value) || value == '.' || value == '-';
+  }
+
+  static void AppendCodePoint(StringBuilder& builder, UChar32 value) {
+    if (U_IS_BMP(value)) {
+      builder.Append(static_cast<UChar>(value));
+      return;
+    }
+    builder.Append(U16_LEAD(value));
+    builder.Append(U16_TRAIL(value));
+  }
+
+  static String CodePoints(std::initializer_list<UChar32> values) {
+    StringBuilder builder;
+    for (UChar32 value : values)
+      AppendCodePoint(builder, value);
+    return builder.ToString();
+  }
+
+  static wtf_size_t CodePointLength(const String& value) {
+    wtf_size_t count = 0;
+    for (wtf_size_t offset = 0; offset < value.length(); ++count) {
+      wtf_size_t next = offset;
+      CodePointAt(value, offset, &next);
+      offset = next;
+    }
+    return count;
+  }
+
+  static String PrefixCodePoints(const String& value, wtf_size_t count) {
+    wtf_size_t offset = 0;
+    wtf_size_t seen = 0;
+    while (offset < value.length() && seen < count) {
+      wtf_size_t next = offset;
+      CodePointAt(value, offset, &next);
+      offset = next;
+      ++seen;
+    }
+    return value.substr(0, offset);
+  }
+
+  static String StripPythonWhitespace(const String& value) {
+    wtf_size_t start = 0;
+    wtf_size_t end = value.length();
+    while (start < end && IsPythonWhitespace(value[start]))
+      ++start;
+    while (end > start && IsPythonWhitespace(value[end - 1]))
+      --end;
+    return value.substr(start, end - start);
+  }
+
+  static String CollapsePythonWhitespace(const String& value) {
+    StringBuilder result;
+    bool pending_space = false;
+    for (wtf_size_t i = 0; i < value.length(); ++i) {
+      UChar c = value[i];
+      if (IsPythonWhitespace(c)) {
+        if (result.length())
+          pending_space = true;
+        continue;
+      }
+      if (pending_space) {
+        result.Append(' ');
+        pending_space = false;
+      }
+      result.Append(c);
+    }
+    return result.ToString();
+  }
+
+  static String DecodeHtmlEntities(const String& value) {
+    if (!value.contains('&'))
+      return value;
+    SegmentedString source(value);
+    StringBuilder result;
+    while (!source.IsEmpty()) {
+      UChar current = source.CurrentChar();
+      source.Advance();
+      if (current != '&') {
+        result.Append(current);
+        continue;
+      }
+      bool not_enough_characters = false;
+      DecodedHTMLEntity decoded;
+      bool success =
+          ConsumeHTMLEntity(source, decoded, not_enough_characters);
+      if (!success || not_enough_characters) {
+        result.Append('&');
+        continue;
+      }
+      for (unsigned i = 0; i < decoded.length; ++i)
+        result.Append(decoded.data[i]);
+    }
+    return result.ToString();
+  }
+
+  static String Clean(const String& raw, bool fix_mojibake = true) {
+    String text = raw;
+    if (fix_mojibake) {
+      struct Replacement {
+        String bad;
+        String good;
+      };
+      const Replacement replacements[] = {
+          {CodePoints({0x00e2, 0x20ac, 0x00a2}), CodePoints({0x2022})},
+          {CodePoints({0x00e2, 0x20ac, 0x201c}), CodePoints({0x2013})},
+          {CodePoints({0x00e2, 0x20ac, 0x201d}), CodePoints({0x2014})},
+          {CodePoints({0x00e2, 0x20ac, 0x02dc}), CodePoints({0x2018})},
+          {CodePoints({0x00e2, 0x20ac, 0x2122}), CodePoints({0x2019})},
+          {CodePoints({0x00e2, 0x20ac, 0x0153}), CodePoints({0x201c})},
+          {CodePoints({0x00e2, 0x20ac, 0x009d}), CodePoints({0x201d})},
+          {CodePoints({0x00e2, 0x20ac}), CodePoints({0x201d})},
+          {CodePoints({0x00c2, 0x0020}), CodePoints({0x0020})},
+          {CodePoints({0x00c2}), String()},
+      };
+      for (const Replacement& replacement : replacements)
+        text.Replace(replacement.bad, replacement.good);
+    }
+    text = DecodeHtmlEntities(text);
+    if (text.contains('<') && text.contains('>')) {
+      std::string utf8 = text.Utf8().c_str();
+      re2::StringPiece labels_input(utf8);
+      std::string label;
+      Vector<String> labels;
+      static const base::NoDestructor<re2::RE2> kLabelPattern(
+          "(?i)\\b(?:aria-label|alt|title)=[\"']([^\"']+)[\"']");
+      while (re2::RE2::FindAndConsume(&labels_input, *kLabelPattern, &label))
+        labels.push_back(String::FromUtf8(label));
+      static const base::NoDestructor<re2::RE2> kTagPattern("<[^>]+>");
+      re2::RE2::GlobalReplace(&utf8, *kTagPattern, " ");
+      String stripped =
+          CollapsePythonWhitespace(String::FromUtf8(utf8));
+      if (!stripped.empty()) {
+        text = stripped;
+      } else if (!labels.empty()) {
+        text = Join(labels, " ");
+      }
+    }
+    return CollapsePythonWhitespace(text);
+  }
+
+  static String Clip(const String& text, int limit) {
+    if (limit <= 0 || CodePointLength(text) <= static_cast<wtf_size_t>(limit))
+      return text;
+    String clipped = PrefixCodePoints(text, std::max(0, limit - 1));
+    clipped = StripPythonWhitespace(clipped);
+    return clipped + CodePoints({0x2026});
+  }
+
+  static String PythonLower(const String& text) {
+    static const CaseMap kRootCaseMap{CaseMap::Locale()};
+    return kRootCaseMap.ToLower(text);
+  }
+
+  static String NormKey(const String& text) {
+    String lowered = PythonLower(text);
+    StringBuilder result;
+    for (wtf_size_t offset = 0; offset < lowered.length();) {
+      wtf_size_t next = offset;
+      UChar32 value = CodePointAt(lowered, offset, &next);
+      offset = next;
+      if (IsPythonWord(value))
+        AppendCodePoint(result, value);
+    }
+    return result.ToString();
+  }
+
+  static Vector<String> Dedupe(const Vector<String>& values) {
+    Vector<String> result;
+    HashSet<String> seen;
+    for (const String& item : values) {
+      String value = Clean(item, false);
+      if (value.empty() || seen.Contains(value))
+        continue;
+      seen.insert(value);
+      result.push_back(value);
+    }
+    return result;
+  }
+
+  static String Join(const Vector<String>& values, const String& separator) {
+    StringBuilder result;
+    for (wtf_size_t i = 0; i < values.size(); ++i) {
+      if (i)
+        result.Append(separator);
+      result.Append(values[i]);
+    }
+    return result.ToString();
+  }
+
+  static bool Contains(const Vector<String>& values, const String& value) {
+    for (const String& item : values) {
+      if (item == value)
+        return true;
+    }
+    return false;
+  }
+
+  static bool IsOneOf(const String& value,
+                      std::initializer_list<const char*> choices) {
+    for (const char* choice : choices) {
+      if (value == choice)
+        return true;
+    }
+    return false;
+  }
+
+  static bool ContainsAny(const Vector<String>& values,
+                          std::initializer_list<const char*> choices) {
+    for (const char* choice : choices) {
+      if (Contains(values, choice))
+        return true;
+    }
+    return false;
+  }
+
+  static String JsonQuote(const String& value) {
+    static const char kHex[] = "0123456789abcdef";
+    StringBuilder result;
+    result.Append('"');
+    for (wtf_size_t i = 0; i < value.length(); ++i) {
+      UChar c = value[i];
+      switch (c) {
+        case '"': result.Append("\\\""); break;
+        case '\\': result.Append("\\\\"); break;
+        case '\b': result.Append("\\b"); break;
+        case '\f': result.Append("\\f"); break;
+        case '\n': result.Append("\\n"); break;
+        case '\r': result.Append("\\r"); break;
+        case '\t': result.Append("\\t"); break;
+        default:
+          if (c < 0x20) {
+            result.Append("\\u00");
+            result.Append(kHex[(c >> 4) & 0xf]);
+            result.Append(kHex[c & 0xf]);
+          } else {
+            result.Append(c);
+          }
+      }
+    }
+    result.Append('"');
+    return result.ToString();
+  }
+
+  static String PythonNumber(double value) {
+    if (std::isfinite(value) && value == std::trunc(value))
+      return String::Number(static_cast<int64_t>(value));
+    return String::FromUtf8(base::NumberToString(value));
+  }
+
+  static String PythonBool(bool value) {
+    return value ? "True" : "False";
+  }
+
+  static bool RegexSearch(const String& text, const re2::RE2& pattern) {
+    return re2::RE2::PartialMatch(text.Utf8().c_str(), pattern);
+  }
+
+  static bool RegexFullMatch(const String& text, const re2::RE2& pattern) {
+    return re2::RE2::FullMatch(text.Utf8().c_str(), pattern);
+  }
+
+  static HashMap<String, String> AttrMap(Node* node) {
+    HashMap<String, String> attributes;
+    if (!node)
+      return attributes;
+    for (const auto& owned_attribute : *node->getSelectedAttributes()) {
+      auto* attribute = owned_attribute.get();
+      String name = Clean(attribute->getName(), false);
+      String value = Clean(attribute->getValue());
+      if (!name.empty())
+        attributes.Set(name, value);
+    }
+    return attributes;
+  }
+
+  static String BoundsText(Node* node) {
+    if (!node || !node->hasBounds())
+      return String();
+    protocol::DOM::Rect* bounds = node->getBounds(nullptr);
+    return "x=" + PythonNumber(bounds->getX()) +
+           " y=" + PythonNumber(bounds->getY()) +
+           " w=" + PythonNumber(bounds->getWidth()) +
+           " h=" + PythonNumber(bounds->getHeight());
+  }
+  static bool HasNonEmptyAttribute(const HashMap<String, String>& attrs,
+                                   const String& name) {
+    auto it = attrs.find(name);
+    return it != attrs.end() && !it->value.empty();
+  }
+
+  Node* FindNode(const String& ref) const {
+    auto it = by_ref_.find(ref);
+    return it == by_ref_.end() ? nullptr : it->value;
+  }
+
+  Vector<String> ActionTypes(Node* node) const {
+    auto cached = action_types_cache_.find(node);
+    if (cached != action_types_cache_.end())
+      return cached->value;
+    Vector<String> values;
+    for (const String& action : *node->getActionTypes())
+      values.push_back(action);
+    // The protocol has no snapshot-level actions array, so Python's action_map
+    // is empty for every real capture.
+    values = Dedupe(values);
+    action_types_cache_.Set(node, values);
+    return values;
+  }
+
+  String ActionId(Node* node) const {
+    return node->hasBackendNodeId()
+               ? String::Number(node->getBackendNodeId(0))
+               : String::Number(node->getIndex());
+  }
+
+  Vector<Node*> Ancestors(Node* node) const {
+    Vector<Node*> result;
+    HashSet<String> seen;
+    while (node && node->hasParentRef()) {
+      String ref = node->getParentRef(String());
+      if (seen.Contains(ref))
+        break;
+      seen.insert(ref);
+      node = FindNode(ref);
+      if (!node)
+        break;
+      result.push_back(node);
+    }
+    return result;
+  }
+
+  HashSet<String> Descendants(const String& ref) const {
+    HashSet<String> found;
+    Vector<Node*> stack;
+    auto it = children_.find(ref);
+    if (it != children_.end())
+      stack = it->value;
+    while (!stack.empty()) {
+      Node* node = stack.back();
+      stack.pop_back();
+      String node_ref = node->getRef();
+      if (found.Contains(node_ref))
+        continue;
+      found.insert(node_ref);
+      auto child_it = children_.find(node_ref);
+      if (child_it != children_.end())
+        for (Node* child : child_it->value)
+          stack.push_back(child);
+    }
+    return found;
+  }
+
+  String ComputeText(Node* node) const {
+    String direct = node->hasDirectText()
+                        ? Clean(node->getDirectText(String()))
+                        : String();
+    String accessible = node->hasAccessibleName()
+                            ? Clean(node->getAccessibleName(String()))
+                            : String();
+    String subtree = node->hasSubtreeText()
+                         ? Clean(node->getSubtreeText(String()))
+                         : String();
+    if (!direct.empty() &&
+        CodePointLength(subtree) > CodePointLength(direct)) {
+      String direct_key = NormKey(direct);
+      if (node->getTruncated() ||
+          (!direct_key.empty() && NormKey(subtree).contains(direct_key)))
+        return subtree;
+    }
+    if (!direct.empty())
+      return direct;
+    if (!subtree.empty() &&
+        CodePointLength(subtree) > CodePointLength(accessible))
+      return subtree;
+    if (!accessible.empty())
+      return accessible;
+    if (!subtree.empty())
+      return subtree;
+    if (node->hasDescription()) {
+      String description = Clean(node->getDescription(String()));
+      if (!description.empty())
+        return description;
+    }
+    HashMap<String, String> attrs = AttrMap(node);
+    for (const char* key : {"aria-label", "title", "placeholder", "alt",
+                            "value", "name"}) {
+      auto it = attrs.find(key);
+      if (it != attrs.end() && !it->value.empty())
+        return it->value;
+    }
+    return String();
+  }
+
+  String Text(Node* node) const {
+    auto cached = text_cache_.find(node);
+    if (cached != text_cache_.end())
+      return cached->value;
+    String value = ComputeText(node);
+    text_cache_.Set(node, value);
+    return value;
+  }
+
+  String NodeTag(Node* node) const {
+    auto cached = tag_cache_.find(node);
+    if (cached != tag_cache_.end())
+      return cached->value;
+    String value = PythonLower(Clean(node->getTag(), false));
+    tag_cache_.Set(node, value);
+    return value;
+  }
+
+  String NodeRole(Node* node) const {
+    auto cached = role_cache_.find(node);
+    if (cached != role_cache_.end())
+      return cached->value;
+    String value = node->hasRole()
+                       ? PythonLower(Clean(node->getRole(String()), false))
+                       : String();
+    role_cache_.Set(node, value);
+    return value;
+  }
+
+  String ActionKind(Node* node, const Vector<String>& actions) const {
+    String tag = NodeTag(node);
+    String role = NodeRole(node);
+    HashMap<String, String> attrs = AttrMap(node);
+    String label = PythonLower(Text(node));
+    if (Contains(actions, "type") ||
+        IsOneOf(role, {"textbox", "searchbox"}) ||
+        IsOneOf(tag, {"input", "textarea"})) {
+      return role != "searchbox" && !label.contains("search")
+                 ? "text-input"
+                 : "search-input";
+    }
+    if (IsOneOf(role, {"checkbox", "radio", "switch"}) ||
+        Contains(actions, "toggle"))
+      return "toggle";
+    if (IsOneOf(role, {"combobox", "listbox"}) || tag == "select" ||
+        Contains(actions, "select"))
+      return "select";
+    if (Contains(actions, "upload"))
+      return "file-upload";
+    if (tag == "a" || role == "link" || HasNonEmptyAttribute(attrs, "href"))
+      return "link";
+    if (tag == "button" || role == "button")
+      return "button";
+    if (actions.size() == 1 && actions[0] == "scroll")
+      return "scroll-region";
+    if (Contains(actions, "click"))
+      return "clickable";
+    return "action";
+  }
+
+  String CompactNodeLabel(Node* node, int limit = 80) const {
+    String label = node->hasAccessibleName()
+                       ? Clean(node->getAccessibleName(String()))
+                       : String();
+    if (label.empty() && node->hasDirectText())
+      label = Clean(node->getDirectText(String()));
+    if (label.empty() && node->hasDescription())
+      label = Clean(node->getDescription(String()));
+    if (label.empty()) {
+      HashMap<String, String> attrs = AttrMap(node);
+      for (const char* key : {"aria-label", "title", "placeholder", "alt",
+                              "value", "name"}) {
+        auto it = attrs.find(key);
+        if (it != attrs.end() && !it->value.empty()) {
+          label = it->value;
+          break;
+        }
+      }
+    }
+    return Clip(label, limit);
+  }
+
+  String RegionContext(Node* node, int limit = 160) const {
+    Vector<String> parts;
+    HashSet<String> seen;
+    for (Node* ancestor : Ancestors(node)) {
+      String tag = NodeTag(ancestor);
+      String role = NodeRole(ancestor);
+      String semantic = ancestor->hasSemanticBoundary()
+                            ? PythonLower(Clean(
+                                  ancestor->getSemanticBoundary(String()), false))
+                            : String();
+      if (IsOneOf(tag, {"html", "body"}))
+        continue;
+      if (IsOneOf(role, {"generic", "none", ""}) &&
+          IsOneOf(tag, {"div", "span"}) && semantic.empty())
+        continue;
+      String label = CompactNodeLabel(ancestor, 70);
+      if (label.empty())
+        label = !role.empty() ? role : tag;
+      String key = NormKey(role + ":" + tag + ":" + label);
+      if (key.empty() || seen.Contains(key))
+        continue;
+      seen.insert(key);
+      String prefix = !role.empty() ? role : (!semantic.empty() ? semantic : tag);
+      parts.push_back(label.empty() ? prefix : prefix + ": " + label);
+      if (parts.size() >= 3)
+        break;
+    }
+    std::reverse(parts.begin(), parts.end());
+    return Clip(Join(parts, " / "), limit);
+  }
+
+  bool IsBroadAction(Node* node, const Vector<String>& actions) const {
+    String tag = NodeTag(node);
+    String role = NodeRole(node);
+    String text = Text(node);
+    String direct = node->hasDirectText()
+                        ? Clean(node->getDirectText(String()))
+                        : String();
+    if (IsOneOf(tag, {"html", "body"}))
+      return true;
+    if (IsOneOf(role, {"dialog", "alertdialog"}) &&
+        IsOneOf(tag, {"html", "body", "main", "section", "article", "div"}))
+      return true;
+    if (IsOneOf(tag, {"table", "thead", "tbody", "tfoot", "tr", "td", "th"}) &&
+        actions.size() == 1 && actions[0] == "scroll")
+      return true;
+    if (IsOneOf(tag, {"html", "body", "main", "section", "article", "div"}) &&
+        IsOneOf(role, {"", "generic", "none", "application"})) {
+      if (direct.empty() && CodePointLength(text) > 220)
+        return true;
+      if (actions.size() == 1 && actions[0] == "click" &&
+          CodePointLength(text) > 180)
+        return true;
+    }
+    return false;
+  }
+
+  String DisplayContext(Node* node, int limit = 80) const {
+    for (Node* ancestor : Ancestors(node)) {
+      String tag = NodeTag(ancestor);
+      String role = NodeRole(ancestor);
+      String semantic = ancestor->hasSemanticBoundary()
+                            ? PythonLower(Clean(
+                                  ancestor->getSemanticBoundary(String()), false))
+                            : String();
+      String label = CompactNodeLabel(ancestor, limit);
+      if (IsOneOf(StripPythonWhitespace(PythonLower(label)),
+                  {"", "document", "generic", "group", "home",
+                   "jump to date", "list", "listitem", "main", "none",
+                   "tabpanel", "toolbar"}))
+        label = String();
+      if (!label.empty() &&
+          IsOneOf(role, {"alertdialog", "dialog", "group", "list", "main",
+                         "navigation", "search", "tabpanel", "toolbar", "tree"}))
+        return Clip(label, limit);
+      if (!label.empty() && IsOneOf(semantic, {"list", "section", "region"}))
+        return Clip(label, limit);
+      if (!label.empty() &&
+          IsOneOf(tag, {"article", "aside", "footer", "header", "main", "nav", "section"}))
+        return Clip(label, limit);
+    }
+    return String();
+  }
+
+  bool HasAncestorRoleOrTag(Node* node,
+                            std::initializer_list<const char*> values) const {
+    for (Node* ancestor : Ancestors(node)) {
+      if (IsOneOf(NodeTag(ancestor), values) ||
+          IsOneOf(NodeRole(ancestor), values))
+        return true;
+    }
+    return false;
+  }
+
+  bool IsReadableItem(Node* node) const {
+    String semantic = node->hasSemanticBoundary()
+                          ? PythonLower(Clean(
+                                node->getSemanticBoundary(String()), false))
+                          : String();
+    return NodeTag(node) == "li" || NodeRole(node) == "listitem" ||
+           semantic == "listitem";
+  }
+
+  Node* NearestReadableItem(Node* node) const {
+    for (Node* ancestor : Ancestors(node)) {
+      if (IsReadableItem(ancestor))
+        return ancestor;
+    }
+    return nullptr;
+  }
+
+  String SemanticOwnerRef(Node* node) const {
+    if (IsReadableItem(node))
+      return node->getRef();
+    Node* owner = NearestReadableItem(node);
+    if (!owner) {
+      for (Node* ancestor : Ancestors(node)) {
+        if (repeated_item_refs_.Contains(ancestor->getRef())) {
+          owner = ancestor;
+          break;
+        }
+      }
+    }
+    return owner ? owner->getRef() : String();
+  }
+
+  Vector<String> AdditionalContentEvidence(
+      Node* node,
+      const Vector<String>& emitted_lines) const {
+    String ref = node->getRef();
+    if (ref.empty())
+      return {};
+    String emitted_key = NormKey(Join(emitted_lines, " "));
+    String owner_ref = SemanticOwnerRef(node);
+    Vector<Node*> descendants;
+    for (const String& child_ref : Descendants(ref)) {
+      Node* child = FindNode(child_ref);
+      if (child)
+        descendants.push_back(child);
+    }
+    std::stable_sort(descendants.begin(), descendants.end(),
+                     [](Node* left, Node* right) {
+                       return left->getSourceOrder() < right->getSourceOrder();
+                     });
+    Vector<String> evidence;
+    HashSet<String> seen;
+    for (Node* child : descendants) {
+      if (ActionTypes(child).empty())
+        continue;
+      String child_owner_ref = SemanticOwnerRef(child);
+      if (!owner_ref.empty() && !child_owner_ref.empty() &&
+          child_owner_ref != owner_ref) {
+        continue;
+      }
+      HashMap<String, String> attrs = AttrMap(child);
+      auto attribute = [&attrs](const String& name) {
+        auto it = attrs.find(name);
+        return it == attrs.end() ? String() : it->value;
+      };
+      Vector<String> candidates = {
+          child->hasAccessibleName()
+              ? Clean(child->getAccessibleName(String()))
+              : String(),
+          attribute("aria-label"), attribute("value"), attribute("title"),
+          Text(child)};
+      bool has_state = false;
+      for (const auto& state : *child->getStates()) {
+        if (!Clean(state->getValue()).empty()) {
+          has_state = true;
+          break;
+        }
+      }
+      for (const String& candidate : candidates) {
+        String value = Clean(candidate);
+        if (!has_state && !ContainsPythonDigit(value))
+          continue;
+        String key = NormKey(value);
+        if (key.empty() || seen.Contains(key) || emitted_key.contains(key))
+          continue;
+        seen.insert(key);
+        evidence.push_back(value);
+        break;
+      }
+    }
+    return evidence;
+  }
+
+  static bool ControlWord(const String& text) {
+    static const base::NoDestructor<re2::RE2> pattern(
+        "(?i)\\b(?:open|view|show|expand|details|more|download|submit|send|"
+        "search|load|toggle|next|previous|change|dismiss|close|sign in|reply|"
+        "replies|thread|comment|comments|file|attachment)\\b");
+    return RegexSearch(text, *pattern);
+  }
+
+  static bool EssentialActionWord(const String& text) {
+    static const base::NoDestructor<re2::RE2> pattern(
+        "(?i)\\b(?:search|load|submit|send|save|dismiss|close|change|continue|"
+        "next|previous|open|download|upload)\\b");
+    return RegexSearch(text, *pattern);
+  }
+
+  bool LowValueNestedControl(Node* node,
+                             const Vector<String>& actions,
+                             const String& parent_text) const {
+    String label = Text(node);
+    if (ContainsAny(actions, {"type", "focus", "select", "toggle", "upload"}))
+      return false;
+    if (label.empty() || StripPythonWhitespace(PythonLower(label)) == "toggle file")
+      return true;
+    static const base::NoDestructor<re2::RE2> media(
+        "(?i)\\.(?:pdf|docx?|xlsx?|pptx?|csv|txt|png|jpe?g|gif|webp|svg)\\b");
+    if (RegexSearch(label, *media))
+      return true;
+    if (ControlWord(label))
+      return false;
+    static const base::NoDestructor<re2::RE2> punctuation("^[^A-Za-z0-9]+$");
+    static const base::NoDestructor<re2::RE2> handle("^@\\S+$");
+    static const base::NoDestructor<re2::RE2> time(
+        "(?i)^\\d{1,2}:\\d{2}(?::\\d{2})?\\s*(?:AM|PM)?$");
+    static const base::NoDestructor<re2::RE2> date(
+        "(?i)^\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4}(?:\\s+at\\b.*)?$");
+    if (RegexSearch(label, *punctuation) || RegexSearch(label, *handle) ||
+        RegexSearch(label, *time) || RegexSearch(label, *date))
+      return true;
+    if (PythonLower(RegionContext(node, 160)).contains("profile") &&
+        !ControlWord(label))
+      return true;
+    if (NodeTag(node) == "button" || NodeRole(node) == "button")
+      return false;
+    String label_key = NormKey(label);
+    return !label_key.empty() && NormKey(parent_text).contains(label_key) &&
+           CodePointLength(label) <= kChromeLabelMaxChars;
+  }
+
+  bool IsPrimaryAction(Node* node, const Vector<String>& actions) const {
+    if (suppressed_refs_.Contains(node->getRef()) || IsBroadAction(node, actions))
+      return false;
+    String tag = NodeTag(node);
+    String label = Text(node);
+    if (actions.size() == 1 && actions[0] == "scroll")
+      return false;
+    if (!node->getVisible() || !node->getInViewport() || !node->getHitTestable())
+      return false;
+    if (IsOneOf(tag, {"input", "textarea", "select"}) ||
+        ContainsAny(actions, {"type", "focus", "select", "toggle", "upload"}))
+      return true;
+    String label_key = NormKey(label);
+    if (!label.empty() &&
+        !IsOneOf(label_key, {"", "toggle", "more", "menu"}))
+      return true;
+    HashMap<String, String> attrs = AttrMap(node);
+    return !label.empty() && (HasNonEmptyAttribute(attrs, "href") ||
+                              HasNonEmptyAttribute(attrs, "src"));
+  }
+
+  bool IsUsefulNestedAction(Node* node,
+                            const Vector<String>& actions,
+                            const String& parent_text) const {
+    String label = Text(node);
+    String tag = NodeTag(node);
+    if (ContainsAny(actions, {"type", "focus", "select", "toggle", "upload"}) ||
+        IsOneOf(tag, {"input", "textarea", "select"}))
+      return true;
+    if (label.empty() || LowValueNestedControl(node, actions, parent_text))
+      return false;
+    if (ControlWord(label) || tag == "button" ||
+        (tag == "a" && CodePointLength(label) > 2))
+      return true;
+    String key = NormKey(label);
+    return key.empty() || !NormKey(parent_text).contains(key);
+  }
+
+  std::pair<int, int> NestedActionRank(Node* node) const {
+    Vector<String> actions = ActionTypes(node);
+    int rank = 3;
+    if (ContainsAny(actions, {"type", "focus", "select", "toggle", "upload"}))
+      rank = 0;
+    else if (ControlWord(Text(node)))
+      rank = 1;
+    else if (NodeTag(node) == "button" || NodeRole(node) == "button")
+      rank = 2;
+    else if (NodeTag(node) == "a" || NodeRole(node) == "link")
+      rank = 4;
+    return {rank, node->getSourceOrder()};
+  }
+
+  void BuildActionNodes() {
+    for (Node* node : nodes_) {
+      Vector<String> actions = ActionTypes(node);
+      if (!actions.empty())
+        action_nodes_.push_back(ActionRow{node, actions});
+    }
+    std::stable_sort(action_nodes_.begin(), action_nodes_.end(),
+                     [](const ActionRow& left, const ActionRow& right) {
+      if (left.node->getIndex() != right.node->getIndex())
+        return left.node->getIndex() < right.node->getIndex();
+      return left.node->getSourceOrder() < right.node->getSourceOrder();
+    });
+  }
+
+  void GroupNestedActions() {
+    for (const ActionRow& row : action_nodes_) {
+      if (!IsPrimaryAction(row.node, row.actions))
+        continue;
+      Node* parent = NearestReadableItem(row.node);
+      if (!parent ||
+          !IsUsefulNestedAction(row.node, row.actions, Text(parent)) ||
+          parent->getRef().empty() || parent->getRef() == row.node->getRef())
+        continue;
+      nested_actions_.insert(parent->getRef(), Vector<ActionRow>())
+          .stored_value->value.push_back(row);
+    }
+    for (auto& entry : nested_actions_) {
+      std::stable_sort(entry.value.begin(), entry.value.end(),
+                       [this](const ActionRow& left, const ActionRow& right) {
+        return NestedActionRank(left.node) < NestedActionRank(right.node);
+      });
+    }
+  }
+
+  String VisibilityNotes(Node* node) const {
+    Vector<String> notes;
+    if (!node->getVisible()) notes.push_back("hidden");
+    if (!node->getInViewport()) notes.push_back("offscreen");
+    if (node->getOccluded()) notes.push_back("occluded");
+    if (!node->getHitTestable()) notes.push_back("not-hit-testable");
+    return Join(notes, ",");
+  }
+
+  String ActionLine(Node* node,
+                    const Vector<String>& actions,
+                    bool debug = false) const {
+    String label = Clip(Text(node), debug ? 220 : 140);
+    static const base::NoDestructor<re2::RE2> thread(
+        "(?i)\\b\\d+\\s+repl(?:y|ies)(?:\\s+(?:Last reply\\s+)?[^|]{1,50}?)?\\s+View thread\\b");
+    static const base::NoDestructor<re2::RE2> replies(
+        "(?i)^\\d+\\s+repl(?:y|ies)$");
+    if (!debug && (RegexSearch(label, *thread) || RegexFullMatch(label, *replies)))
+      return "[" + ActionId(node) + "] open thread/replies";
+    String kind = ActionKind(node, actions);
+    Vector<String> bits = {"[" + ActionId(node) + "]", kind};
+    if (!label.empty()) bits.push_back(JsonQuote(label));
+    if (!(actions.size() == 1 && actions[0] == "click") ||
+        IsOneOf(kind, {"search-input", "text-input", "select", "toggle", "file-upload"}))
+      bits.push_back("actions=" + Join(actions, ","));
+    HashMap<String, String> attrs = AttrMap(node);
+    if (HasNonEmptyAttribute(attrs, "src") && label.empty()) bits.push_back("src=(image)");
+    if (debug) {
+      bits.push_back("<" + (node->getTag().empty() ? String("?") : node->getTag()) + ">");
+      String role = node->hasRole() ? Clean(node->getRole(String()), false) : String();
+      if (!role.empty()) bits.push_back("role=" + role);
+      String context = RegionContext(node, 140);
+      if (!context.empty()) bits.push_back("context=" + JsonQuote(context));
+      String visibility = VisibilityNotes(node);
+      if (!visibility.empty()) bits.push_back("state=" + visibility);
+      bits.push_back("hit=" + PythonBool(node->getHitTestable()));
+      bits.push_back("viewport=" + PythonBool(node->getInViewport()));
+      bits.push_back("sourceOrder=" + String::Number(node->getSourceOrder()));
+      String bounds = BoundsText(node);
+      if (!bounds.empty()) bits.push_back("bounds=(" + bounds + ")");
+    }
+    return Join(bits, " ");
+  }
+
+  HashSet<String> AncestorRegionTokens(Node* node) const {
+    HashSet<String> result;
+    for (Node* ancestor : Ancestors(node)) {
+      String tag = NodeTag(ancestor), role = NodeRole(ancestor);
+      if (!tag.empty()) result.insert(tag);
+      if (!role.empty()) result.insert(role);
+      if (ancestor->hasSemanticBoundary()) {
+        String semantic = PythonLower(
+            Clean(ancestor->getSemanticBoundary(String()), false));
+        if (!semantic.empty()) result.insert(semantic);
+      }
+    }
+    return result;
+  }
+
+  std::optional<int> AttrInt(Node* node, const String& name) const {
+    HashMap<String, String> attrs = AttrMap(node);
+    auto it = attrs.find(name);
+    if (it == attrs.end()) return std::nullopt;
+    int value = 0;
+    if (!base::StringToInt(it->value.Utf8(), &value)) return std::nullopt;
+    return value;
+  }
+
+  bool HasDeeperTreeItem(Node* node) const {
+    std::optional<int> level = AttrInt(node, "aria-level");
+    if (!level.has_value()) return false;
+    String tree_ref;
+    for (Node* ancestor : Ancestors(node)) {
+      if (NodeRole(ancestor) == "tree") { tree_ref = ancestor->getRef(); break; }
+    }
+    if (tree_ref.empty()) return false;
+    for (const String& ref : Descendants(tree_ref)) {
+      Node* other = FindNode(ref);
+      if (!other || other == node || NodeRole(other) != "treeitem") continue;
+      std::optional<int> other_level = AttrInt(other, "aria-level");
+      if (other_level.has_value() && *other_level > *level) return true;
+    }
+    return false;
+  }
+
+  std::pair<int, int> ActionPriority(Node* node,
+                                     const Vector<String>& actions) const {
+    String label = Text(node), lower = PythonLower(label);
+    String kind = ActionKind(node, actions), role = NodeRole(node), tag = NodeTag(node);
+    HashSet<String> tokens = AncestorRegionTokens(node);
+    String context = PythonLower(RegionContext(node, 180));
+    bool toolbar = tokens.Contains("toolbar");
+    bool navigation = tokens.Contains("nav") || tokens.Contains("navigation") ||
+                      tokens.Contains("aside") || tokens.Contains("tree") ||
+                      tokens.Contains("treeitem") || tokens.Contains("tablist");
+    bool search = tokens.Contains("search") || context.contains("search") ||
+                  role == "option" || tokens.Contains("listbox");
+    bool main = tokens.Contains("main") || tokens.Contains("article") ||
+                tokens.Contains("feed") || tokens.Contains("list") ||
+                tokens.Contains("listitem") || tokens.Contains("table") ||
+                tokens.Contains("row") || tokens.Contains("cell") ||
+                NearestReadableItem(node);
+    bool result_like = search &&
+        !IsOneOf(kind, {"search-input", "text-input", "file-upload"}) &&
+        CodePointLength(label) >= 12 && !toolbar &&
+        (IsOneOf(role, {"option", "listitem", "treeitem"}) ||
+         IsOneOf(kind, {"select", "link", "clickable"}));
+    int order = node->getSourceOrder();
+    if (!node->getHitTestable() || !node->getInViewport() || !node->getVisible()) return {9, order};
+    if (lower.contains("nan")) return {9, order};
+    if (IsOneOf(kind, {"search-input", "text-input"})) return {0, order};
+    if (lower.contains("search")) return {1, order};
+    if (result_like || lower.starts_with("load ")) return {2, order};
+    if (role == "tab") return {7, order};
+    if (role == "treeitem" && !label.empty() && CodePointLength(label) <= 32) {
+      std::optional<int> level = AttrInt(node, "aria-level");
+      if (level.has_value() && *level <= 1 && HasDeeperTreeItem(node)) return {7, order};
+      return {3, order};
+    }
+    if (navigation && !EssentialActionWord(label)) return {7, order};
+    if (toolbar) return {7, order};
+    if ((tag == "button" || role == "button") && !main &&
+        !EssentialActionWord(label) && !ControlWord(label)) return {7, order};
+    String stripped = StripPythonWhitespace(lower);
+    if (IsOneOf(stripped, {"user:", "user"})) return {8, order};
+    if (ControlWord(label)) return {2, order};
+    if (IsOneOf(role, {"tab", "treeitem"})) return {5, order};
+    if (IsOneOf(tag, {"a", "button"}) || IsOneOf(role, {"button", "link"})) return {3, order};
+    return {6, order};
+  }
+
+  Vector<String> RenderHeader() const {
+    Vector<String> lines = {
+        "URL: " + Clean(snapshot_->getUrl()),
+        "Title: " + Clean(snapshot_->getTitle()),
+        "Use only ids from this observation. Scroll with scroll(\"down\", 1600, element_id=<id>)."};
+    auto* stats = snapshot_->getStats();
+    if (stats) {
+      lines.push_back("Snapshot: returnedNodes=" + String::Number(stats->getReturnedNodes()) +
+                      " groups=" + String::Number(stats->getGroups()) +
+                      " truncated=" + PythonBool(stats->getTruncated()));
+    }
+    return lines;
+  }
+
+  Vector<Vector<String>> TableRows(Node* table) const {
+    Vector<Node*> rows;
+    for (const String& ref : Descendants(table->getRef())) {
+      Node* node = FindNode(ref);
+      String semantic = node && node->hasSemanticBoundary()
+                            ? PythonLower(Clean(
+                                  node->getSemanticBoundary(String()), false))
+                            : String();
+      if (node && (NodeTag(node) == "tr" || semantic == "row")) rows.push_back(node);
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](Node* a, Node* b) {
+      return a->getSourceOrder() < b->getSourceOrder();
+    });
+    Vector<Vector<String>> result;
+    for (Node* row : rows) {
+      Vector<String> cells;
+      auto it = children_.find(row->getRef());
+      if (it != children_.end()) {
+        for (Node* cell : it->value) {
+          String semantic = cell->hasSemanticBoundary()
+                                ? PythonLower(Clean(
+                                      cell->getSemanticBoundary(String()), false))
+                                : String();
+          if (!IsOneOf(NodeTag(cell), {"td", "th"}) && semantic != "cell") continue;
+          String raw = cell->hasDirectText() && !cell->getDirectText(String()).empty()
+                           ? cell->getDirectText(String())
+                           : cell->getSubtreeText(String());
+          cells.push_back(Clip(Clean(raw), kMaxCellChars));
+        }
+      }
+      bool any = false;
+      for (const String& cell : cells) if (!cell.empty()) { any = true; break; }
+      if (any) result.push_back(cells);
+    }
+    return result;
+  }
+
+  Vector<String> RenderTables(HashSet<String>* covered) const {
+    Vector<Node*> tables;
+    for (Node* node : nodes_) if (NodeTag(node) == "table") tables.push_back(node);
+    std::stable_sort(tables.begin(), tables.end(), [](Node* a, Node* b) {
+      return a->getSourceOrder() < b->getSourceOrder();
+    });
+    Vector<String> lines;
+    if (tables.empty()) return lines;
+    lines.push_back("=== TABLES ===");
+    int number = 0;
+    for (Node* table : tables) {
+      ++number;
+      covered->insert(table->getRef());
+      for (const String& ref : Descendants(table->getRef())) covered->insert(ref);
+      Vector<Vector<String>> rows = TableRows(table);
+      wtf_size_t columns = 0;
+      for (const auto& row : rows) columns = std::max(columns, row.size());
+      lines.push_back("Table " + String::Number(number) + ": rows=" +
+                      String::Number(rows.size()) + " columns=" + String::Number(columns));
+      wtf_size_t shown = std::min<wtf_size_t>(rows.size(), kMaxTableRows);
+      for (wtf_size_t i = 0; i < shown; ++i) lines.push_back("  " + Join(rows[i], " | "));
+      if (rows.size() > shown)
+        lines.push_back("  [table rows hidden: " + String::Number(rows.size() - shown) + " more]");
+    }
+    return lines;
+  }
+
+  bool IsLowValueContent(const String& text) const {
+    static const base::NoDestructor<re2::RE2> pattern(
+        "(?i)^(?:folder|new|loading|loading[ .…]*|loading history[ .…]*|shift \\+ return|last updated\\b.*|press ctrl\\b.*)$");
+    return RegexFullMatch(Clean(text), *pattern);
+  }
+
+  bool MatchesActionLabel(const String& text) const {
+    String key = NormKey(text);
+    if (key.empty()) return false;
+    if (action_labels_.Contains(key)) return true;
+    for (const String& label : action_labels_) if (label.contains(key)) return true;
+    return false;
+  }
+
+  bool IsContentNode(Node* node, const HashSet<String>& covered) const {
+    String ref = node->getRef();
+    if (covered.Contains(ref) || suppressed_refs_.Contains(ref)) return false;
+    String tag = NodeTag(node), role = NodeRole(node);
+    String semantic = node->hasSemanticBoundary()
+                          ? PythonLower(Clean(
+                                node->getSemanticBoundary(String()), false))
+                          : String();
+    String text = Text(node);
+    if (text.empty() || IsLowValueContent(text)) return false;
+    if (!kIncludeOffscreenContent && !node->getInViewport()) return false;
+    if (kIncludeOffscreenContent && !node->getInViewport() && ActionTypes(node).empty() &&
+        HasAncestorRoleOrTag(node, {"nav", "aside", "navigation", "toolbar", "header", "footer", "menu"}))
+      return false;
+    if (IsOneOf(tag, {"html", "body", "table", "thead", "tbody", "tfoot", "tr", "td", "th",
+                      "img", "picture", "video", "audio", "canvas"})) return false;
+    if (!ActionTypes(node).empty() &&
+        !IsOneOf(tag, {"article", "blockquote", "caption", "dd", "dt", "figcaption", "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "pre", "summary"}) &&
+        !IsOneOf(role, {"heading", "paragraph", "listitem"})) return false;
+    if (IsOneOf(tag, {"article", "blockquote", "caption", "dd", "dt", "figcaption", "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "pre", "summary"}) ||
+        IsOneOf(role, {"heading", "paragraph", "listitem", "alertdialog", "dialog"}) || semantic == "listitem") return true;
+    String direct = node->hasDirectText() ? Clean(node->getDirectText(String())) : String();
+    if (direct.empty()) return false;
+    return !(CodePointLength(direct) <= kChromeLabelMaxChars &&
+             MatchesActionLabel(direct) && !ContainsPythonDigit(text));
+  }
+
+  bool HasRenderedAncestor(Node* node, const HashSet<String>& rendered) const {
+    HashSet<String> walked;
+    while (node && node->hasParentRef()) {
+      String ref = node->getParentRef(String());
+      if (walked.Contains(ref)) break;
+      walked.insert(ref);
+      if (rendered.Contains(ref)) return true;
+      node = FindNode(ref);
+    }
+    return false;
+  }
+
+  std::optional<ParsedMessage> ParseMessage(const String& text) const {
+    String raw = Clean(text);
+    std::string author_utf8, time_utf8, body_utf8;
+    static const base::NoDestructor<re2::RE2> message(
+        "(?i)^([A-Z][A-Za-z0-9 ._'-]{1,80}?)\\s+"
+        "(\\d{1,2}:\\d{2}\\s*(?:AM|PM))\\s+(.+)$");
+    if (!re2::RE2::FullMatch(raw.Utf8().c_str(), *message, &author_utf8,
+                             &time_utf8, &body_utf8))
+      return std::nullopt;
+    ParsedMessage result;
+    result.author = Clean(String::FromUtf8(author_utf8));
+    result.time = Clean(String::FromUtf8(time_utf8));
+    String body = Clean(String::FromUtf8(body_utf8));
+
+    std::string body_bytes = body.Utf8().c_str();
+    re2::StringPiece groups[3];
+    static const base::NoDestructor<re2::RE2> thread(
+        "(?i)\\b(\\d+\\s+repl(?:y|ies))"
+        "(?:\\s+((?:Last reply\\s+)?[^|]{1,50}?))?"
+        "\\s+View thread\\b");
+    if (thread->Match(body_bytes, 0, body_bytes.size(), re2::RE2::UNANCHORED,
+                      groups, 3)) {
+      String count = Clean(String::FromUtf8(std::string(groups[1])));
+      String last = Clean(String::FromUtf8(std::string(groups[2])));
+      result.thread = last.empty() ? count : count + ", " + last;
+      size_t start = static_cast<size_t>(groups[0].data() - body_bytes.data());
+      size_t end = start + groups[0].size();
+      body = Clean(String::FromUtf8(body_bytes.substr(0, start) + " " +
+                                    body_bytes.substr(end)));
+      wtf_size_t space = body.rfind(' ');
+      if (space != kNotFound) {
+        String token = StripPythonWhitespace(body.substr(space + 1));
+        if (IsOneOf(token, {"+1", "👍", "👀", "🙏", "🎉", "🔥", "✅", "❌"})) {
+          result.reactions = token;
+          body = Clean(body.substr(0, space));
+        }
+      }
+    }
+    result.text = body;
+    return result;
+  }
+
+  static bool MediaFileLabel(const String& label) {
+    static const base::NoDestructor<re2::RE2> pattern(
+        "(?i)\\.(?:pdf|docx?|xlsx?|pptx?|csv|txt|png|jpe?g|gif|webp|svg)"
+        "(?:$|[^\\p{L}\\p{N}_])");
+    return RegexSearch(label, *pattern);
+  }
+
+  static bool FullFileLabel(const String& label) {
+    static const base::NoDestructor<re2::RE2> pattern(
+        "(?i)^[\\p{L}\\p{N}_@()+.-]+(?:"
+        "[\\x{0009}-\\x{000D}\\x{001C}-\\x{0020}\\x{0085}"
+        "\\x{00A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}"
+        "\\x{2029}\\x{202F}\\x{205F}\\x{3000}]+-"
+        "[\\x{0009}-\\x{000D}\\x{001C}-\\x{0020}\\x{0085}"
+        "\\x{00A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}"
+        "\\x{2029}\\x{202F}\\x{205F}\\x{3000}]+"
+        "[\\p{L}\\p{N}_@()+.-]+)*"
+        "\\.(?:pdf|docx?|xlsx?|pptx?|csv|txt|png|jpe?g|gif|webp|svg)$");
+    return RegexFullMatch(label, *pattern);
+  }
+
+  static Vector<String> FileLabelsInText(const String& text) {
+    Vector<String> labels;
+    std::string bytes = Clean(text).Utf8().c_str();
+    struct Span { size_t start; size_t end; };
+    Vector<Span> occupied;
+    static const base::NoDestructor<re2::RE2> spaced_file_pattern(
+        "(?i)(?:^|[^\\p{L}\\p{N}_.-])"
+        "([\\p{L}\\p{N}_@()+.-]+(?:"
+        "[\\x{0009}-\\x{000D}\\x{001C}-\\x{0020}\\x{0085}"
+        "\\x{00A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}"
+        "\\x{2029}\\x{202F}\\x{205F}\\x{3000}]+-"
+        "[\\x{0009}-\\x{000D}\\x{001C}-\\x{0020}\\x{0085}"
+        "\\x{00A0}\\x{1680}\\x{2000}-\\x{200A}\\x{2028}"
+        "\\x{2029}\\x{202F}\\x{205F}\\x{3000}]+"
+        "[\\p{L}\\p{N}_@()+.-]+)+"
+        "\\.(?:pdf|docx?|xlsx?|pptx?|csv|txt|png|jpe?g|gif|webp|svg))"
+        "(?:$|[^\\p{L}\\p{N}_])");
+    static const base::NoDestructor<re2::RE2> file_token_pattern(
+        "(?i)(?:^|[^\\p{L}\\p{N}_.-])"
+        "([\\p{L}\\p{N}_@()+.-]+"
+        "\\.(?:pdf|docx?|xlsx?|pptx?|csv|txt|png|jpe?g|gif|webp|svg))"
+        "(?:$|[^\\p{L}\\p{N}_])");
+    const re2::RE2* patterns[] = {spaced_file_pattern.get(),
+                                  file_token_pattern.get()};
+    for (const re2::RE2* pattern : patterns) {
+      size_t position = 0;
+      while (position <= bytes.size()) {
+        re2::StringPiece groups[2];
+        if (!pattern->Match(bytes, position, bytes.size(),
+                            re2::RE2::UNANCHORED, groups, 2))
+          break;
+        size_t start = static_cast<size_t>(groups[1].data() - bytes.data());
+        size_t end = start + groups[1].size();
+        bool overlaps = false;
+        for (const Span& old : occupied)
+          if (!(end <= old.start || start >= old.end)) { overlaps = true; break; }
+        if (!overlaps) {
+          occupied.push_back(Span{start, end});
+          labels.push_back(String::FromUtf8(std::string(groups[1])));
+        }
+        position = std::max(end, position + 1);
+      }
+    }
+    return labels;
+  }
+
+  String NormalizeAttachmentLabel(const String& raw) const {
+    String value = Clean(raw);
+    if (value.ends_with("Canvas") && value != "Canvas" &&
+        value.length() > 6) {
+      UChar before = value[value.length() - 7];
+      if ((before >= 'A' && before <= 'Z') || (before >= 'a' && before <= 'z') ||
+          (before >= '0' && before <= '9'))
+        value = value.substr(0, value.length() - 6) + " Canvas";
+    }
+    return Clean(value);
+  }
+
+  Vector<String> AttachmentLabels(const String& text,
+                                  const Vector<ActionRow>& controls) const {
+    Vector<String> labels = FileLabelsInText(text);
+    HashSet<String> seen;
+    for (const String& label : labels) seen.insert(NormKey(label));
+    static const base::NoDestructor<re2::RE2> canvas("(?i)\\bcanvas\\b");
+    for (const ActionRow& control : controls) {
+      String label = NormalizeAttachmentLabel(Text(control.node));
+      String lower = StripPythonWhitespace(PythonLower(label));
+      if (label.empty() || lower == "toggle file") continue;
+      bool attachment = MediaFileLabel(label) ||
+                        IsOneOf(NodeTag(control.node), {"img", "picture", "video", "audio", "canvas"});
+      bool canvas_attachment = RegexSearch(lower, *canvas) && lower.ends_with("canvas");
+      bool short_add = (lower.starts_with("add ") || lower.starts_with("create "));
+      if (short_add) {
+        int words = 1;
+        for (wtf_size_t i = 0; i < lower.length(); ++i) if (lower[i] == ' ') ++words;
+        short_add = words <= 4;
+      }
+      attachment = attachment || (canvas_attachment && lower != "canvas" && !short_add);
+      if (!attachment) continue;
+      String key = NormKey(label);
+      if (!key.empty() && seen.Contains(key)) continue;
+      seen.insert(key);
+      labels.push_back(label);
+    }
+    return labels;
+  }
+
+  String TextWithoutAttachments(const String& text,
+                                const Vector<String>& attachments) const {
+    String stripped = Clean(text);
+    for (const String& label : attachments) {
+      if (!FullFileLabel(label))
+        continue;
+      wtf_size_t search_from = 0;
+      while (search_from <= stripped.length()) {
+        wtf_size_t position = stripped.find(label, search_from);
+        if (position == kNotFound)
+          break;
+        wtf_size_t end = position + label.length();
+        bool valid_before =
+            position == 0 ||
+            !IsAttachmentBoundaryCharacter(CodePointBefore(stripped, position));
+        wtf_size_t next = end;
+        bool valid_after = true;
+        if (end < stripped.length()) {
+          UChar32 after = CodePointAt(stripped, end, &next);
+          valid_after = !IsAttachmentBoundaryCharacter(after);
+        }
+        if (valid_before && valid_after) {
+          stripped = stripped.substr(0, position) + " " +
+                     stripped.substr(end);
+          break;
+        }
+        search_from = next;
+      }
+    }
+    std::string bytes = stripped.Utf8().c_str();
+    static const base::NoDestructor<re2::RE2> count(
+        "(?i)\\b\\d+\\s+files?\\s+Download all\\b");
+    re2::RE2::GlobalReplace(&bytes, *count, " ");
+    stripped = Clean(String::FromUtf8(bytes));
+    return stripped.empty() ? Clean(text) : stripped;
+  }
+
+  Vector<String> FormatContent(const String& text,
+                               const String& prefix,
+                               const Vector<ActionRow>& controls) const {
+    Vector<String> attachments = AttachmentLabels(text, controls);
+    std::optional<ParsedMessage> parsed = ParseMessage(text);
+    Vector<String> lines;
+    if (!parsed.has_value()) {
+      lines.push_back(prefix + " " + Clip(text, std::min(kMaxTextChars, 360)));
+      if (!attachments.empty())
+        lines.push_back("  attachments: " + Join(attachments, ", "));
+      return lines;
+    }
+    lines.push_back(prefix + " " + parsed->author + " " + parsed->time);
+    if (!parsed->text.empty())
+      lines.push_back("  text: " + Clip(TextWithoutAttachments(parsed->text, attachments),
+                                        std::min(kMaxTextChars, 320)));
+    if (!attachments.empty())
+      lines.push_back("  attachments: " + Join(attachments, ", "));
+    if (!parsed->reactions.empty()) {
+      String reaction = parsed->reactions;
+      reaction.Replace("+1", "+1 emoji");
+      lines.push_back("  reactions: " + reaction);
+    }
+    if (!parsed->thread.empty())
+      lines.push_back("  thread: " + parsed->thread);
+    return lines;
+  }
+
+  Vector<ScrollRegionRow> ScrollRegionRows() const {
+    Vector<ScrollRegionRow> rows;
+    for (Node* node : nodes_) {
+      if (suppressed_refs_.Contains(node->getRef()) || !node->getScrollable() ||
+          !node->getVisible() || !node->getInViewport() || !node->hasBounds())
+        continue;
+      auto* bounds = node->getBounds(nullptr);
+      double area = bounds->getWidth() * bounds->getHeight();
+      if (area <= 0 || bounds->getHeight() < 320) continue;
+      rows.push_back(ScrollRegionRow{area, node});
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+      return a.area > b.area;
+    });
+    return rows;
+  }
+
+  String ScrollRegionLabel(Node* node) const {
+    String label = node->hasAccessibleName() ? Clean(node->getAccessibleName(String())) : String();
+    if (label.empty() && node->hasDescription()) label = Clean(node->getDescription(String()));
+    if (label.empty() && node->hasRole()) label = Clean(node->getRole(String()), false);
+    if (label.empty()) label = Clean(node->getTag(), false);
+    if (label.empty()) label = "region";
+    String key = StripPythonWhitespace(PythonLower(label));
+    if (IsOneOf(key, {"", "document", "generic", "group", "home", "jump to date", "list",
+                      "listitem", "main", "none", "tabpanel", "toolbar"})) {
+      String context = DisplayContext(node, 60);
+      label = context.empty() ? String("page content") : context + " content";
+    }
+    return Clip(label, 80);
+  }
+
+  Vector<String> RenderContent(const HashSet<String>& covered,
+                               HashSet<String>* rendered_refs) {
+    Vector<Node*> candidates;
+    for (Node* node : nodes_) if (IsContentNode(node, covered)) candidates.push_back(node);
+    std::stable_sort(candidates.begin(), candidates.end(), [](Node* a, Node* b) {
+      return a->getSourceOrder() < b->getSourceOrder();
+    });
+    Vector<String> visible, offscreen;
+    HashSet<String> whole, seen;
+    String visible_context, offscreen_context;
+    for (wtf_size_t index = 0; index < candidates.size(); ++index) {
+      Node* node = candidates[index];
+      if (HasRenderedAncestor(node, whole)) continue;
+      String full = Text(node), clipped = Clip(full, kMaxTextChars), ref = node->getRef();
+      auto children_it = children_.find(ref);
+      bool is_leaf =
+          children_it == children_.end() || children_it->value.empty();
+      if (!ref.empty() && is_leaf && !node->getTruncated() &&
+          CodePointLength(clipped) >= CodePointLength(full))
+        whole.insert(ref);
+      String key = NormKey(clipped);
+      String dedupe_key = SemanticOwnerRef(node) + "\n" + key;
+      if (key.empty() || seen.Contains(dedupe_key)) continue;
+      seen.insert(dedupe_key);
+      rendered_content_text_keys_.insert(key);
+      rendered_refs->insert(ref);
+      bool is_visible = node->getVisible() && node->getInViewport();
+      Vector<String>& target = is_visible ? visible : offscreen;
+      String context = DisplayContext(node);
+      String& last_context = is_visible ? visible_context : offscreen_context;
+      if (!context.empty() && context != last_context) {
+        target.push_back("Context: " + context);
+        last_context = context;
+      }
+      Vector<String> node_actions = ActionTypes(node);
+      auto controls_it = nested_actions_.find(ref);
+      Vector<ActionRow> controls = controls_it == nested_actions_.end()
+                                       ? Vector<ActionRow>() : controls_it->value;
+      Vector<ActionRow> useful;
+      for (const ActionRow& control : controls) {
+        if (!LowValueNestedControl(control.node, control.actions, full)) useful.push_back(control);
+      }
+      String prefix = "-";
+      static const base::NoDestructor<re2::RE2> date("(?i)^\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4}$");
+      if (is_visible && NodeRole(node) != "listitem" && !RegexFullMatch(clipped, *date) &&
+          !node_actions.empty() && IsPrimaryAction(node, node_actions) && useful.empty())
+        prefix = "- [" + ActionId(node) + "]";
+      Vector<String> content_lines = FormatContent(full, prefix, controls);
+      for (const String& line : content_lines)
+        target.push_back(line);
+      for (const String& evidence :
+           AdditionalContentEvidence(node, content_lines)) {
+        target.push_back("  evidence: " + evidence);
+      }
+      if (!useful.empty()) {
+        Vector<String> control_lines;
+        wtf_size_t shown = std::min<wtf_size_t>(useful.size(), kMaxNestedActions);
+        for (wtf_size_t i = 0; i < shown; ++i)
+          control_lines.push_back(ActionLine(useful[i].node, useful[i].actions));
+        target.push_back("  actions: " + Join(control_lines, "; "));
+        if (useful.size() > shown)
+          target.push_back("  [actions hidden: " + String::Number(useful.size() - shown) + " more]");
+      }
+    }
+    Vector<String> lines;
+    if (!visible.empty()) {
+      lines.push_back("=== VISIBLE CONTENT ===");
+      for (const String& line : visible)
+        lines.push_back(line);
+    }
+    if (!offscreen.empty()) {
+      lines.push_back("=== ADDITIONAL CAPTURED CONTENT ===");
+      Vector<ScrollRegionRow> scroll = ScrollRegionRows();
+      if (!scroll.empty())
+        lines.push_back("Not currently clickable. To interact with these rows, scroll [" +
+                        ActionId(scroll[0].node) + "] " + ScrollRegionLabel(scroll[0].node) + ".");
+      else
+        lines.push_back("Not currently clickable. Use page scroll to bring this content into view.");
+      for (const String& line : offscreen)
+        lines.push_back(line);
+    }
+    return lines;
+  }
+
+  Vector<String> RenderMedia(const HashSet<String>& covered) const {
+    Vector<Node*> ordered = nodes_;
+    std::stable_sort(ordered.begin(), ordered.end(), [](Node* a, Node* b) {
+      return a->getSourceOrder() < b->getSourceOrder();
+    });
+    Vector<String> lines;
+    HashSet<String> seen;
+    int count = 0;
+    for (Node* node : ordered) {
+      if (covered.Contains(node->getRef())) continue;
+      String tag = NodeTag(node);
+      if (!IsOneOf(tag, {"img", "picture", "video", "audio", "canvas"})) continue;
+      HashMap<String, String> attrs = AttrMap(node);
+      String label = Text(node);
+      for (const char* key : {"alt", "title", "src"}) {
+        if (!label.empty()) break;
+        auto it = attrs.find(key); if (it != attrs.end()) label = it->value;
+      }
+      if (label.empty()) continue;
+      String label_key = NormKey(label);
+      bool represented = false;
+      for (const String& key : rendered_content_text_keys_) {
+        if (!label_key.empty() && (label_key == key || key.contains(label_key) || label_key.contains(key))) {
+          represented = true; break;
+        }
+      }
+      if (represented) continue;
+      String key = tag + ":" + label_key;
+      if (seen.Contains(key)) continue;
+      seen.insert(key);
+      if (lines.empty()) lines.push_back("=== MEDIA / IMAGE LABELS ===");
+      Vector<String> parts = {"- " + JsonQuote(Clip(label, 120))};
+      if (HasNonEmptyAttribute(attrs, "src")) parts.push_back("source=present");
+      String context = DisplayContext(node, 60);
+      if (!context.empty()) parts.push_back("context=" + JsonQuote(context));
+      lines.push_back(Join(parts, " "));
+      if (++count >= std::min(kMaxMedia, 20)) {
+        lines.push_back("[media hidden: more than " + String::Number(std::min(kMaxMedia, 20)) + " items]");
+        break;
+      }
+    }
+    return lines;
+  }
+
+  Vector<String> RenderActions(const HashSet<String>& rendered) const {
+    HashSet<String> nested, descendants;
+    for (const String& item_ref : rendered) {
+      auto it = nested_actions_.find(item_ref);
+      if (it != nested_actions_.end())
+        for (const ActionRow& row : it->value) nested.insert(row.node->getRef());
+      for (const String& ref : Descendants(item_ref)) descendants.insert(ref);
+    }
+    Vector<ActionRow> primary;
+    struct Secondary { ActionRow row; String reason; };
+    Vector<Secondary> secondary;
+    HashSet<String> seen_primary, seen_secondary;
+    for (const ActionRow& row : action_nodes_) {
+      String ref = row.node->getRef();
+      if (nested.Contains(ref) || rendered.Contains(ref) || descendants.Contains(ref)) continue;
+      String label_key = NormKey(Text(row.node));
+      String key;
+      if (!row.node->getHitTestable() && !label_key.empty())
+        key = String("not-hit:") + label_key;
+      else
+        key = ActionId(row.node) + ":" + Join(row.actions, ",") + ":" + label_key;
+      if (IsPrimaryAction(row.node, row.actions)) {
+        if (seen_primary.Contains(key)) continue;
+        seen_primary.insert(key); primary.push_back(row);
+      } else {
+        if (seen_secondary.Contains(key)) continue;
+        seen_secondary.insert(key);
+        String reason = "broad/noisy";
+        if (Contains(row.actions, "click") && !row.node->getHitTestable()) reason = "not_hit_testable";
+        else if (Text(row.node).empty()) reason = "unlabeled";
+        secondary.push_back(Secondary{row, reason});
+      }
+    }
+    Vector<String> lines;
+    if (!primary.empty()) {
+      std::stable_sort(primary.begin(), primary.end(), [this](const auto& a, const auto& b) {
+        return ActionPriority(a.node, a.actions) < ActionPriority(b.node, b.actions);
+      });
+      Vector<ActionRow> compact;
+      for (const auto& row : primary)
+        if (ActionPriority(row.node, row.actions).first <= 3) compact.push_back(row);
+      if (compact.empty()) compact = primary;
+      int limit = std::min(kMaxActions, 25);
+      lines.push_back("=== USEFUL PAGE ACTIONS ===");
+      wtf_size_t shown = std::min<wtf_size_t>(compact.size(), limit);
+      HashSet<String> shown_refs;
+      for (wtf_size_t i = 0; i < shown; ++i) {
+        lines.push_back(ActionLine(compact[i].node, compact[i].actions));
+        shown_refs.insert(compact[i].node->getRef());
+      }
+      wtf_size_t hidden = primary.size() - std::min(primary.size(), shown);
+      if (hidden) lines.push_back("[other actions hidden: " + String::Number(hidden) + "]");
+
+      Vector<String> read_only_rows;
+      HashSet<String> seen_read_only;
+      for (const ActionRow& row : primary) {
+        if (shown_refs.Contains(row.node->getRef()))
+          continue;
+        Vector<String> facts = {Text(row.node)};
+        for (const auto& state : *row.node->getStates()) {
+          String name = Clean(state->getName(), false);
+          String value = Clean(state->getValue());
+          if (!name.empty() && !value.empty())
+            facts.push_back(name + "=" + value);
+        }
+        Vector<String> non_empty_facts;
+        for (const String& fact : facts) {
+          if (!fact.empty())
+            non_empty_facts.push_back(fact);
+        }
+        String fact = Clean(Join(non_empty_facts, "; "));
+        String fact_key = NormKey(fact);
+        if (fact_key.empty() || seen_read_only.Contains(fact_key))
+          continue;
+        bool represented = false;
+        for (const String& content_key : rendered_content_text_keys_) {
+          if (fact_key == content_key || content_key.contains(fact_key)) {
+            represented = true;
+            break;
+          }
+        }
+        if (represented)
+          continue;
+        seen_read_only.insert(fact_key);
+        read_only_rows.push_back("- " + fact);
+      }
+      if (!read_only_rows.empty()) {
+        lines.push_back("=== READ-ONLY CONTROL EVIDENCE ===");
+        for (const String& row : read_only_rows)
+          lines.push_back(row);
+      }
+    }
+    if (kIncludeSecondary && !secondary.empty()) {
+      lines.push_back("=== SECONDARY / DEBUG ACTIONS ===");
+      wtf_size_t shown = std::min<wtf_size_t>(secondary.size(), kMaxSecondaryActions);
+      for (wtf_size_t i = 0; i < shown; ++i)
+        lines.push_back(ActionLine(secondary[i].row.node, secondary[i].row.actions, true) +
+                        " reason=" + secondary[i].reason);
+      if (secondary.size() > shown)
+        lines.push_back("[secondary actions hidden: " + String::Number(secondary.size() - shown) + " more]");
+    }
+
+    Vector<String> complete_control_text;
+    HashSet<String> seen_complete;
+    for (const ActionRow& row : action_nodes_) {
+      String full = Text(row.node);
+      if (CodePointLength(full) <= 220)
+        continue;
+      String key = NormKey(full);
+      if (key.empty() || seen_complete.Contains(key))
+        continue;
+      seen_complete.insert(key);
+      complete_control_text.push_back("- " + full);
+    }
+    if (!complete_control_text.empty()) {
+      lines.push_back("=== COMPLETE READ-ONLY CONTROL TEXT ===");
+      for (const String& row : complete_control_text)
+        lines.push_back(row);
+    }
+    return lines;
+  }
+
+  Vector<String> RenderScrollRegions() const {
+    Vector<ScrollRegionRow> regions = ScrollRegionRows();
+    Vector<String> lines;
+    if (regions.empty()) return lines;
+    lines = {"=== SCROLLABLE REGIONS ===",
+             "Use: scroll(\"down\", 1600, element_id=<id>) or scroll(\"up\", 1600, element_id=<id>)."};
+    wtf_size_t shown = std::min<wtf_size_t>(regions.size(), kMaxScrollRegions);
+    for (wtf_size_t i = 0; i < shown; ++i) {
+      Node* node = regions[i].node;
+      auto* bounds = node->getBounds(nullptr);
+      String role = NodeRole(node);
+      String role_text = !role.empty() && !IsOneOf(role, {"generic", "none"})
+                             ? " (" + role + ")" : String();
+      String size = String::Number(static_cast<int>(bounds->getWidth())) + "x" +
+                    String::Number(static_cast<int>(bounds->getHeight()));
+      lines.push_back("[" + ActionId(node) + "] " + ScrollRegionLabel(node) +
+                      role_text + " " + CodePoints({0x2014}) + " " + size);
+    }
+    if (regions.size() > shown)
+      lines.push_back("[scrollable regions hidden: " + String::Number(regions.size() - shown) + " more]");
+    return lines;
+  }
+
+  protocol::ChromiumRL::StructuredPageSnapshot* snapshot_ = nullptr;
+  Vector<Node*> nodes_;
+  HashMap<String, Node*> by_ref_;
+  HashMap<String, Vector<Node*>> children_;
+  HashSet<String> suppressed_refs_;
+  Vector<ActionRow> action_nodes_;
+  HashSet<String> action_labels_;
+  HashMap<String, Vector<ActionRow>> nested_actions_;
+  HashSet<String> rendered_content_text_keys_;
+  HashSet<String> repeated_item_refs_;
+  mutable HashMap<Node*, String> text_cache_;
+  mutable HashMap<Node*, String> tag_cache_;
+  mutable HashMap<Node*, String> role_cache_;
+  mutable HashMap<Node*, Vector<String>> action_types_cache_;
+};
+
+std::unique_ptr<protocol::ChromiumRL::ModelDOM>
+StructuredModelDOMRenderer::Render() {
+  auto sections =
+      std::make_unique<protocol::Array<protocol::ChromiumRL::ModelDOMSection>>();
+  auto append_section = [&sections](const String& name,
+                                    const Vector<String>& lines) {
+    if (lines.empty())
+      return;
+    auto protocol_lines = std::make_unique<protocol::Array<String>>();
+    for (const String& line : lines)
+      protocol_lines->push_back(line);
+    sections->push_back(protocol::ChromiumRL::ModelDOMSection::create()
+                            .setName(name)
+                            .setLines(std::move(protocol_lines))
+                            .build());
+  };
+
+  append_section("header", RenderHeader());
+  HashSet<String> covered;
+  Vector<String> tables = RenderTables(&covered);
+  append_section("tables", tables);
+  HashSet<String> rendered;
+  Vector<String> content = RenderContent(covered, &rendered);
+  append_section("content", content);
+  HashSet<String> media_covered = covered;
+  for (const String& ref : rendered) {
+    media_covered.insert(ref);
+    for (const String& child : Descendants(ref))
+      media_covered.insert(child);
+  }
+  Vector<String> media = RenderMedia(media_covered);
+  append_section("media", media);
+  Vector<String> actions = RenderActions(rendered);
+  append_section("actions", actions);
+  Vector<String> scroll = RenderScrollRegions();
+  append_section("scroll_regions", scroll);
+
+  return protocol::ChromiumRL::ModelDOM::create()
+      .setRendererName("chromiumrl-model-dom")
+      .setSections(std::move(sections))
+      .build();
+}
+
+}  // namespace
+
+std::unique_ptr<protocol::ChromiumRL::ModelDOM>
+InspectorChromiumRLAgent::BuildModelDOM(
+    protocol::ChromiumRL::StructuredPageSnapshot* snapshot) {
+  return StructuredModelDOMRenderer(snapshot).Render();
+}
+
+protocol::Response InspectorChromiumRLAgent::getModelDOM(
+    std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot> snapshot,
+    std::unique_ptr<protocol::ChromiumRL::ModelDOM>* model_dom) {
+  if (!snapshot)
+    return protocol::Response::InvalidParams("snapshot is required");
+  *model_dom = BuildModelDOM(snapshot.get());
   return protocol::Response::Success();
 }
 
