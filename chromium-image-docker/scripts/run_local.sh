@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE_NAME="${CHROMIUM_IMAGE_NAME:-devjangid/wootzapp-chromium-desktop:local}"
-CONTAINER_NAME="${CHROMIUM_CONTAINER_NAME:-wootzapp-chromium-desktop}"
+IMAGE_NAME="${CHROMIUM_IMAGE_NAME:-devjangid/w8-core:local}"
+CONTAINER_NAME="${CHROMIUM_CONTAINER_NAME:-w8-core}"
 CDP_HOST_PORT="${CDP_PORT:-9222}"
 VNC_HOST_PORT="${VNC_PORT:-5900}"
 NOVNC_HOST_PORT="${NOVNC_PORT:-6080}"

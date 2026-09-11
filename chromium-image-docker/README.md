@@ -1,8 +1,8 @@
-# Wootzapp Desktop Browser Runtime
+# w8-core Runtime
 
-This directory builds and runs the Docker runtime for Wootzapp Desktop Browser.
+This directory builds and runs the Docker runtime for w8-core.
 
-The runtime starts the browser, exposes Chrome DevTools Protocol, optionally starts a headed VNC/noVNC display stack, and provides health commands for automation.
+The runtime starts w8-core, exposes Chrome DevTools Protocol, optionally starts a headed VNC/noVNC display stack, and provides health commands for automation.
 
 ## What the runtime does
 
@@ -22,14 +22,14 @@ The serve command:
 
 - prepares the browser profile directory
 - starts Xvfb, VNC, and noVNC when headed mode is enabled
-- starts Wootzapp Desktop Browser
+- starts w8-core
 - starts a public CDP bridge
 - waits until CDP is ready
-- keeps the browser process alive
+- keeps the w8-core process alive
 
 ## Build payload
 
-The browser payload must be present in:
+The w8-core payload must be present in:
 
 ```text
 chromium-image-docker/build/
@@ -61,24 +61,24 @@ cd chromium-image-docker
 The default image name is:
 
 ```text
-devjangid/wootzapp-chromium-desktop:local
+devjangid/w8-core:local
 ```
 
 Override it with:
 
 ```bash
-CHROMIUM_IMAGE_NAME=wootzapp-chromium-desktop:local ./scripts/build_image.sh
+CHROMIUM_IMAGE_NAME=w8-core:local ./scripts/build_image.sh
 ```
 
 You can also build directly with Docker:
 
 ```bash
-docker build -t wootzapp-chromium-desktop:local .
+docker build -t w8-core:local .
 ```
 
 ## Run with Docker Compose
 
-Start the browser:
+Start w8-core:
 
 ```bash
 cd chromium-image-docker
@@ -88,13 +88,13 @@ docker compose up -d
 Check status:
 
 ```bash
-docker compose exec wootzapp-chromium-desktop chromium-runtime-entrypoint status
+docker compose exec w8-core chromium-runtime-entrypoint status
 ```
 
 Wait until ready:
 
 ```bash
-docker compose exec wootzapp-chromium-desktop chromium-runtime-entrypoint wait --timeout 30
+docker compose exec w8-core chromium-runtime-entrypoint wait --timeout 30
 ```
 
 Stop the container:
@@ -127,7 +127,7 @@ Stop:
 
 ## CDP ports
 
-The browser itself starts CDP privately on:
+w8-core itself starts CDP privately on:
 
 ```text
 127.0.0.1:9223
@@ -151,7 +151,7 @@ The public CDP port is controlled by:
 CDP_PORT=9222
 ```
 
-The private browser CDP port is controlled by:
+The private w8-core CDP port is controlled by:
 
 ```env
 CHROMIUM_CDP_PORT=9223
@@ -208,15 +208,15 @@ chromium-runtime-entrypoint version
 
 `wait` polls the public CDP endpoint until it is ready or the timeout expires.
 
-`version` prints the browser version from the Chromium executable.
+`version` prints the w8-core version from the Chromium executable.
 
 ## Common configuration
 
 The Compose file supports these runtime values:
 
 ```env
-CHROMIUM_IMAGE_NAME=devjangid/wootzapp-chromium-desktop:local
-CHROMIUM_CONTAINER_NAME=wootzapp-chromium-desktop
+CHROMIUM_IMAGE_NAME=devjangid/w8-core:local
+CHROMIUM_CONTAINER_NAME=w8-core
 CHROMIUM_SHM_SIZE=2g
 CDP_PORT=9222
 VNC_PORT=5900

@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
-IMAGE_NAME="${CHROMIUM_IMAGE_NAME:-devjangid/wootzapp-chromium-desktop:local}"
+IMAGE_NAME="${CHROMIUM_IMAGE_NAME:-devjangid/w8-core:local}"
 BUILD_DIR="${IMAGE_DIR}/build"
 
 if [ ! -x "${BUILD_DIR}/chrome" ]; then

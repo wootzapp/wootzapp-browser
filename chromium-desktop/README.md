@@ -1,6 +1,6 @@
 # Browsing, Capturing, and Authoring
 
-This document explains the main browser workflows supported by Wootzapp Desktop Browser.
+This document explains the main browser workflows supported by w8-core.
 
 The same desktop browser runtime can be used for normal browsing, CDP-based capture, and authoring capture/replay. The mode is selected through browser runtime configuration and command-line switches.
 
@@ -8,7 +8,7 @@ The same desktop browser runtime can be used for normal browsing, CDP-based capt
 
 Browsing is the default mode.
 
-In this mode, the browser starts normally and loads the configured start URL. Authoring is disabled unless explicitly enabled.
+In this mode, w8-core starts normally and loads the configured start URL. Authoring is disabled unless explicitly enabled.
 
 The Docker runtime uses:
 
@@ -23,7 +23,7 @@ To start a normal browser session with Docker Compose:
 ```bash
 cd chromium-image-docker
 docker compose up -d
-docker compose exec wootzapp-chromium-desktop chromium-runtime-entrypoint status
+docker compose exec w8-core chromium-runtime-entrypoint status
 ```
 
 To start on a specific page:
@@ -32,7 +32,7 @@ To start on a specific page:
 CHROMIUM_START_URL=https://example.com docker compose up -d
 ```
 
-To use the browser visually, start headed mode:
+To use w8-core visually, start headed mode:
 
 ```bash
 CHROMIUM_HEADLESS=0 docker compose up -d
@@ -63,12 +63,12 @@ Automation tools should connect to the public CDP endpoint:
 The runtime status command also reports the CDP WebSocket debugger URL:
 
 ```bash
-docker compose exec wootzapp-chromium-desktop chromium-runtime-entrypoint status
+docker compose exec w8-core chromium-runtime-entrypoint status
 ```
 
 ## Capturing with ChromiumRL CDP
 
-ChromiumRL CDP is the browser's custom DevTools Protocol domain for structured browser observation and capture.
+ChromiumRL CDP is w8-core's custom DevTools Protocol domain for structured browser observation and capture.
 
 It is useful when a tool needs browser-side information instead of only raw page HTML or screenshots.
 
@@ -100,14 +100,22 @@ ChromiumRL.saveDOMState
 ChromiumRL.compareDOMState
 ChromiumRL.getAgentObservation
 ChromiumRL.captureStructuredSnapshot
+ChromiumRL.getModelDOM
 ChromiumRL.startDOMDiff
 ChromiumRL.stopDOMDiff
 ```
 
+`ChromiumRL.getModelDOM` builds structured model-facing DOM data from a
+snapshot previously captured with `ChromiumRL.captureStructuredSnapshot`. It
+takes the captured `StructuredPageSnapshot` as input and returns a `ModelDOM`
+value containing a renderer name and a list of named sections. The command
+works only on the captured snapshot; it does not read or mutate the live
+document.
+
 Typical capture flow:
 
 ```text
-1. Start the browser runtime.
+1. Start the w8-core runtime.
 2. Connect to CDP on port 9222.
 3. Enable or call the required ChromiumRL command.
 4. Store the returned browser state in the calling tool.
@@ -160,7 +168,7 @@ CHROMIUM_HEADLESS=0 \
 docker compose up -d
 ```
 
-In capture mode, the browser:
+In capture mode, w8-core:
 
 - records HTTP and HTTPS responses
 - records redirects
@@ -171,9 +179,9 @@ In capture mode, the browser:
 - records same-document SPA routes
 - bypasses service worker and HTTP cache for main document loading
 
-At capture startup, the browser clears IndexedDB, CacheStorage, and service workers for the profile's default storage partition. Cookies and localStorage are not cleared by that cold-capture cleanup.
+At capture startup, w8-core clears IndexedDB, CacheStorage, and service workers for the profile's default storage partition. Cookies and localStorage are not cleared by that cold-capture cleanup.
 
-Captured data is stored under the browser profile's authoring storage area. In the desktop runtime this is based on the profile directory used by the browser container.
+Captured data is stored under the browser profile's authoring storage area. In the desktop runtime this is based on the profile directory used by the w8-core container.
 
 ## Authoring replay mode
 
@@ -191,7 +199,7 @@ CHROMIUM_HEADLESS=0 \
 docker compose up -d
 ```
 
-In replay mode, the browser:
+In replay mode, w8-core:
 
 - loads captured response records
 - restores captured localStorage and cookies
@@ -201,7 +209,7 @@ In replay mode, the browser:
 - handles same-document SPA route replay
 - provides a synthetic WebSocket connection for offline replay
 
-If a request cannot be matched during strict replay, the browser returns a replay miss response instead of silently going to the live network.
+If a request cannot be matched during strict replay, w8-core returns a replay miss response instead of silently going to the live network.
 
 ## Authoring sessions
 
