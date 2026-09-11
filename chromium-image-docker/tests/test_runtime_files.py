@@ -50,7 +50,7 @@ class RuntimeImageFilesTest(unittest.TestCase):
         self.assertIn("${CDP_PORT:-9222}:9222", text)
         self.assertIn("${VNC_PORT:-5900}:5900", text)
         self.assertIn("${NOVNC_PORT:-6080}:6080", text)
-        self.assertIn("devjangid/w8-core:local", text)
+        self.assertIn("w8-core:chromium-desktop", text)
         self.assertIn("chromium-runtime-entrypoint", text)
 
     def test_local_script_uses_standard_ports(self) -> None:

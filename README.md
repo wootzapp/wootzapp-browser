@@ -65,7 +65,7 @@ cd chromium-image-docker
 Use a custom image name:
 
 ```bash
-CHROMIUM_IMAGE_NAME=w8-core:local ./scripts/build_image.sh
+CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop ./scripts/build_image.sh
 ```
 
 ## Run in headless mode
@@ -240,8 +240,8 @@ agent-browser is not started automatically. Normal browsing and authoring workfl
 ## Common environment variables
 
 ```env
-CHROMIUM_IMAGE_NAME=devjangid/w8-core:local
-CHROMIUM_CONTAINER_NAME=w8-core
+CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop
+CHROMIUM_CONTAINER_NAME=w8-core-browser-engine
 CHROMIUM_HEADLESS=1
 CHROMIUM_RESET_PROFILE=1
 CHROMIUM_START_URL=about:blank

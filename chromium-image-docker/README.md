@@ -61,19 +61,19 @@ cd chromium-image-docker
 The default image name is:
 
 ```text
-devjangid/w8-core:local
+w8-core:chromium-desktop
 ```
 
 Override it with:
 
 ```bash
-CHROMIUM_IMAGE_NAME=w8-core:local ./scripts/build_image.sh
+CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop ./scripts/build_image.sh
 ```
 
 You can also build directly with Docker:
 
 ```bash
-docker build -t w8-core:local .
+docker build -t w8-core:chromium-desktop .
 ```
 
 ## Run with Docker Compose
@@ -215,8 +215,8 @@ chromium-runtime-entrypoint version
 The Compose file supports these runtime values:
 
 ```env
-CHROMIUM_IMAGE_NAME=devjangid/w8-core:local
-CHROMIUM_CONTAINER_NAME=w8-core
+CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop
+CHROMIUM_CONTAINER_NAME=w8-core-browser-engine
 CHROMIUM_SHM_SIZE=2g
 CDP_PORT=9222
 VNC_PORT=5900
