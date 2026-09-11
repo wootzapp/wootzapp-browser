@@ -218,7 +218,7 @@ start_chromium() {
     echo "url=${START_URL}"
   } > "${RUNTIME_DIR}/browser-launch.env"
 
-  log "starting Wootz Chromium authoring_mode=${AUTHORING_MODE} session=${AUTHORING_SESSION} headless=${HEADLESS} private_cdp=127.0.0.1:${INTERNAL_PORT}"
+  log "starting w8-core authoring_mode=${AUTHORING_MODE} session=${AUTHORING_SESSION} headless=${HEADLESS} private_cdp=127.0.0.1:${INTERNAL_PORT}"
   runuser -u "${RUNTIME_USER}" -- env \
     HOME="${RUNTIME_HOME}" \
     DISPLAY="${DISPLAY_VALUE}" \
