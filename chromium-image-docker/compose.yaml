@@ -1,6 +1,11 @@
 services:
   w8-core:
     image: ${CHROMIUM_IMAGE_NAME:-w8-core:chromium-desktop}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        agent_browser: ../agent-browser
     container_name: ${CHROMIUM_CONTAINER_NAME:-w8-core-browser-engine}
     shm_size: ${CHROMIUM_SHM_SIZE:-2g}
     ports:

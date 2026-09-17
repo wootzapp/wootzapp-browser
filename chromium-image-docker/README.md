@@ -1,6 +1,7 @@
 # w8-core Runtime
 
-This directory builds and runs the Docker runtime for w8-core.
+This directory builds and runs the Docker runtime for w8-core, ChromiumRL CDP,
+and the pinned agent-browser command-line runtime.
 
 The runtime starts w8-core, exposes Chrome DevTools Protocol, optionally starts a headed VNC/noVNC display stack, and provides health commands for automation.
 
@@ -24,6 +25,7 @@ The serve command:
 - starts Xvfb, VNC, and noVNC when headed mode is enabled
 - starts w8-core
 - starts a public CDP bridge
+- provides Node.js and the pinned official `agent-browser` CLI
 - waits until CDP is ready
 - keeps the w8-core process alive
 
@@ -48,6 +50,9 @@ build/
 ```
 
 The build script checks that `build/chrome` exists and is executable before building the image.
+It also supplies `../agent-browser` as a named BuildKit context. That context is
+restricted by `agent-browser/.dockerignore`, so local environment files and
+dependencies cannot enter the image build context.
 
 ## Build the image
 
@@ -70,10 +75,12 @@ Override it with:
 CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop ./scripts/build_image.sh
 ```
 
-You can also build directly with Docker:
+You can also build directly with Buildx:
 
 ```bash
-docker build -t w8-core:chromium-desktop .
+docker buildx build --load \
+  --build-context agent_browser=../agent-browser \
+  -t w8-core:chromium-desktop .
 ```
 
 ## Run with Docker Compose
@@ -292,4 +299,25 @@ See the browser workflow README for details:
 
 ## Agent-browser
 
-Some images include optional `agent-browser` automation. When present, see `agent-browser/README.md`.
+The image includes the official agent-browser CLI pinned by
+`../agent-browser/package-lock.json` and a compatible Node.js runtime.
+It contains no model SDK, credentials, prompt, or agent loop. Each harness owns
+those choices and uses agent-browser only for browser observation and actions.
+
+Check the installed command:
+
+```bash
+docker compose exec w8-core node --version
+docker compose exec w8-core agent-browser --version
+```
+
+Attach the CLI to the browser's internal CDP endpoint and take an interactive
+snapshot:
+
+```bash
+docker compose exec \
+  w8-core \
+  agent-browser --cdp http://127.0.0.1:9222 snapshot --interactive --json
+```
+
+See `../agent-browser/README.md` for the harness integration boundary.
