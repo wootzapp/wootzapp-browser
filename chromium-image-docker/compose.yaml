@@ -1,7 +1,7 @@
 services:
-  wootzapp-chromium-desktop:
-    image: ${CHROMIUM_IMAGE_NAME:-devjangid/wootzapp-chromium-desktop:local}
-    container_name: ${CHROMIUM_CONTAINER_NAME:-wootzapp-chromium-desktop}
+  w8-core:
+    image: ${CHROMIUM_IMAGE_NAME:-w8-core:chromium-desktop}
+    container_name: ${CHROMIUM_CONTAINER_NAME:-w8-core-browser-engine}
     shm_size: ${CHROMIUM_SHM_SIZE:-2g}
     ports:
       - "127.0.0.1:${CDP_PORT:-9222}:9222"

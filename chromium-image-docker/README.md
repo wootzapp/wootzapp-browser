@@ -1,10 +1,10 @@
-# Wootz Chromium Desktop Runtime Image
+# w8-core Runtime Image
 
-This directory builds a browser-only Docker image for the Linux desktop Wootz Chromium payload.
+This directory builds a browser-only Docker image for the w8-core Linux desktop payload.
 
 The image owns browser lifecycle only:
 
-- start Wootz Chromium
+- start w8-core
 - expose CDP on container port `9222`
 - expose VNC/noVNC in headed mode
 - keep a reusable browser profile location
@@ -30,13 +30,13 @@ This prepared directory currently hardlinks `build/` from `../chromium-image/bui
 
 ```bash
 cd /home/ubuntu/DevJangid/browser-envs/chromium-image-docker
-docker buildx build --platform linux/amd64 -t devjangid/wootzapp-chromium-desktop:latest --load .
+docker buildx build --platform linux/amd64 -t w8-core:chromium-desktop --load .
 ```
 
 For push:
 
 ```bash
-docker buildx build --platform linux/amd64 -t devjangid/wootzapp-chromium-desktop:latest --push .
+docker buildx build --platform linux/amd64 -t w8-core:chromium-desktop --push .
 ```
 
 ## Run Locally
@@ -45,7 +45,7 @@ With Compose:
 
 ```bash
 docker compose up -d
-docker compose exec wootzapp-chromium-desktop chromium-runtime-entrypoint status
+docker compose exec w8-core chromium-runtime-entrypoint status
 ```
 
 Headed with noVNC:
@@ -58,23 +58,23 @@ Headless:
 
 ```bash
 docker run -d --rm \
-  --name wootzapp-chromium-desktop \
+  --name w8-core-browser-engine \
   --shm-size=2g \
   -p 127.0.0.1:9222:9222 \
-  devjangid/wootzapp-chromium-desktop:latest
+  w8-core:chromium-desktop
 ```
 
 Headed with noVNC:
 
 ```bash
 docker run -d --rm \
-  --name wootzapp-chromium-desktop \
+  --name w8-core-browser-engine \
   --shm-size=2g \
   -p 127.0.0.1:9222:9222 \
   -p 127.0.0.1:5900:5900 \
   -p 127.0.0.1:6080:6080 \
   -e CHROMIUM_HEADLESS=0 \
-  devjangid/wootzapp-chromium-desktop:latest
+  w8-core:chromium-desktop
 ```
 
 Open:
