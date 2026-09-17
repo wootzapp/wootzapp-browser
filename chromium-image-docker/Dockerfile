@@ -24,15 +24,6 @@ ENV VNC_SCREEN=1366x900x24
 
 ARG WOOTZ_UID=1200
 ARG WOOTZ_GID=1200
-ARG IMAGE_VERSION=dev
-ARG VCS_REF=unknown
-
-LABEL org.opencontainers.image.title="w8-core Chromium desktop" \
-      org.opencontainers.image.description="Wootz desktop browser with ChromiumRL CDP and agent-browser" \
-      org.opencontainers.image.source="https://github.com/wootzapp/wootzapp-browser" \
-      org.opencontainers.image.version="${IMAGE_VERSION}" \
-      org.opencontainers.image.revision="${VCS_REF}"
-
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
@@ -103,6 +94,15 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm ci --omit=dev \
     && ln -sf /opt/agent-browser/node_modules/.bin/agent-browser /usr/local/bin/agent-browser \
     && agent-browser --version
+
+ARG IMAGE_VERSION=dev
+ARG VCS_REF=unknown
+
+LABEL org.opencontainers.image.title="w8-core Chromium desktop" \
+      org.opencontainers.image.description="Wootz desktop browser with ChromiumRL CDP and agent-browser" \
+      org.opencontainers.image.source="https://github.com/wootzapp/wootzapp-browser" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}"
 
 WORKDIR /home/wootz
 EXPOSE 9222 5900 6080
