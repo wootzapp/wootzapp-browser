@@ -36,6 +36,7 @@ class RuntimeImageFilesTest(unittest.TestCase):
         self.assertIn("npm ci --omit=dev", text)
         self.assertIn("/usr/local/bin/agent-browser-core", text)
         self.assertIn("/usr/local/bin/agent-browser", text)
+        self.assertNotIn("AGENT_BROWSER_MAX_STEPS", text)
         self.assertNotIn("chmod 0755 /opt/wootzapp/chrome", text)
         self.assertIn('ENTRYPOINT ["/usr/local/bin/chromium-runtime-entrypoint"]', text)
         self.assertIn('CMD ["serve"]', text)
@@ -58,6 +59,7 @@ class RuntimeImageFilesTest(unittest.TestCase):
         self.assertIn("w8-core:chromium-desktop", text)
         self.assertIn("chromium-runtime-entrypoint", text)
         self.assertIn("agent_browser: ../agent-browser", text)
+        self.assertNotIn("AGENT_BROWSER_MAX_STEPS", text)
 
     def test_local_script_uses_standard_ports(self) -> None:
         text = (ROOT / "scripts/run_local.sh").read_text()

@@ -11,11 +11,11 @@ Usage:
 
 Environment:
   OPENAI_API_KEY             Use OpenAI SDK task mode
-  OPENAI_MODEL               Optional OpenAI model name
+  OPENAI_MODEL               Required model name for OpenAI task mode
   AI_GATEWAY_API_KEY         Optional Vercel AI Gateway task mode
   AI_GATEWAY_MODEL           Optional AI Gateway model name
   AGENT_BROWSER_CDP_TARGET   Browser CDP endpoint, default http://127.0.0.1:9222
-  AGENT_BROWSER_MAX_STEPS    Maximum OpenAI task-mode action steps
+  AGENT_BROWSER_MAX_STEPS    Required positive step limit for OpenAI task mode
 `);
 }
 

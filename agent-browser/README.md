@@ -55,11 +55,13 @@ Set at least:
 
 ```env
 OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-4o
+OPENAI_MODEL=your_model_name
+AGENT_BROWSER_MAX_STEPS=your_harness_step_limit
 AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222
 ```
 
-Do not commit real API keys.
+The image does not choose a model or action limit. The calling harness must set
+both values for OpenAI task mode. Do not commit real API keys.
 
 ## Start the browser
 
@@ -92,7 +94,11 @@ Or run directly with environment variables:
 
 ```bash
 cd agent-browser
-OPENAI_API_KEY="$OPENAI_API_KEY" OPENAI_MODEL=gpt-4o AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222 node ./bin/agent-browser-desktop.mjs task "go to https://example.com and summarize the page"
+OPENAI_API_KEY="$OPENAI_API_KEY" \
+OPENAI_MODEL="$OPENAI_MODEL" \
+AGENT_BROWSER_MAX_STEPS="$AGENT_BROWSER_MAX_STEPS" \
+AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222 \
+node ./bin/agent-browser-desktop.mjs task "go to https://example.com and summarize the page"
 ```
 
 ## What happens

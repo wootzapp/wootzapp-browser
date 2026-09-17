@@ -307,6 +307,9 @@ Both commands connect to the container's public CDP bridge by default:
 AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222
 ```
 
+The image does not set a model or maximum action count. Each harness owns those
+policy choices and must pass them when it invokes task mode.
+
 Check the installed commands:
 
 ```bash
@@ -321,6 +324,7 @@ Run task mode without storing a key in the image or Compose configuration:
 docker compose exec \
   -e OPENAI_API_KEY \
   -e OPENAI_MODEL \
+  -e AGENT_BROWSER_MAX_STEPS \
   w8-core \
   agent-browser task "go to https://example.com and summarize the page"
 ```

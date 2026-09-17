@@ -20,8 +20,7 @@ services:
       VNC_SCREEN: ${VNC_SCREEN:-1366x900x24}
       CHROMIUM_START_URL: ${CHROMIUM_START_URL:-about:blank}
       CHROMIUM_EXTRA_ARGS: ${CHROMIUM_EXTRA_ARGS:-}
-      AGENT_BROWSER_CDP_TARGET: http://127.0.0.1:9222
-      AGENT_BROWSER_MAX_STEPS: ${AGENT_BROWSER_MAX_STEPS:-20}
+      AGENT_BROWSER_CDP_TARGET: ${AGENT_BROWSER_CDP_TARGET:-http://127.0.0.1:9222}
     healthcheck:
       test: ["CMD", "chromium-runtime-entrypoint", "status", "--quiet"]
       interval: 15s

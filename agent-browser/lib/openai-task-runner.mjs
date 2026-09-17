@@ -8,12 +8,20 @@ const promptPath = resolve(here, '../prompts/desktop-task.md');
 const SYSTEM_PROMPT = readFileSync(promptPath, 'utf8');
 
 function maxSteps() {
-  const raw = Number.parseInt(process.env.AGENT_BROWSER_MAX_STEPS || '20', 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : 20;
+  const value = process.env.AGENT_BROWSER_MAX_STEPS;
+  const parsed = Number(value);
+  if (!value || !Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error('AGENT_BROWSER_MAX_STEPS must be set to a positive integer by the calling harness');
+  }
+  return parsed;
 }
 
 function modelName() {
-  return process.env.OPENAI_MODEL || process.env.AGENT_BROWSER_MODEL || 'gpt-4o';
+  const model = process.env.OPENAI_MODEL || process.env.AGENT_BROWSER_MODEL;
+  if (!model) {
+    throw new Error('OPENAI_MODEL or AGENT_BROWSER_MODEL must be set by the calling harness');
+  }
+  return model;
 }
 
 function snapshotText(payload) {
@@ -35,7 +43,7 @@ function parseDecision(content) {
   return parsed;
 }
 
-async function decide(client, task, observation, history) {
+async function decide(client, model, task, observation, history) {
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     {
@@ -52,7 +60,7 @@ async function decide(client, task, observation, history) {
     },
   ];
   const response = await client.chat.completions.create({
-    model: modelName(),
+    model,
     messages,
     temperature: 0,
     response_format: { type: 'json_object' },
@@ -101,13 +109,15 @@ export async function runOpenAITask(task) {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY is required for OpenAI task mode');
   }
+  const model = modelName();
+  const stepLimit = maxSteps();
   const { default: OpenAI } = await import('openai');
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const history = [];
-  for (let step = 1; step <= maxSteps(); step += 1) {
+  for (let step = 1; step <= stepLimit; step += 1) {
     const snapshot = runCore(['snapshot', '-i']);
     const observation = snapshotText(snapshot);
-    const decision = await decide(client, task, observation, history);
+    const decision = await decide(client, model, task, observation, history);
     if (decision.action === 'final') {
       const answer = String(decision.answer || '').trim();
       console.log(answer || 'Done.');
@@ -116,5 +126,5 @@ export async function runOpenAITask(task) {
     const result = executeDecision(decision);
     history.push(`${step}. ${JSON.stringify(decision)} -> ${JSON.stringify(result).slice(0, 500)}`);
   }
-  throw new Error(`task did not finish within AGENT_BROWSER_MAX_STEPS=${maxSteps()}`);
+  throw new Error(`task did not finish within AGENT_BROWSER_MAX_STEPS=${stepLimit}`);
 }
