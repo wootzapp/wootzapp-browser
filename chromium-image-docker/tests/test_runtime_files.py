@@ -34,8 +34,10 @@ class RuntimeImageFilesTest(unittest.TestCase):
         self.assertIn("FROM node:24-bookworm-slim AS node-runtime", text)
         self.assertIn("COPY --from=agent_browser package.json package-lock.json ./", text)
         self.assertIn("npm ci --omit=dev", text)
-        self.assertIn("/usr/local/bin/agent-browser-core", text)
         self.assertIn("/usr/local/bin/agent-browser", text)
+        self.assertNotIn("agent-browser-core", text)
+        self.assertNotIn("OPENAI_", text)
+        self.assertNotIn("AI_GATEWAY_", text)
         self.assertNotIn("AGENT_BROWSER_MAX_STEPS", text)
         self.assertNotIn("chmod 0755 /opt/wootzapp/chrome", text)
         self.assertIn('ENTRYPOINT ["/usr/local/bin/chromium-runtime-entrypoint"]', text)
@@ -59,7 +61,16 @@ class RuntimeImageFilesTest(unittest.TestCase):
         self.assertIn("w8-core:chromium-desktop", text)
         self.assertIn("chromium-runtime-entrypoint", text)
         self.assertIn("agent_browser: ../agent-browser", text)
+        self.assertNotIn("OPENAI_", text)
+        self.assertNotIn("AI_GATEWAY_", text)
         self.assertNotIn("AGENT_BROWSER_MAX_STEPS", text)
+
+    def test_agent_browser_package_is_model_agnostic(self) -> None:
+        text = (ROOT.parent / "agent-browser/package.json").read_text()
+        self.assertIn('"agent-browser": "0.27.3"', text)
+        self.assertNotIn('"openai"', text)
+        self.assertNotIn('"anthropic"', text)
+        self.assertNotIn('"gemini"', text)
 
     def test_local_script_uses_standard_ports(self) -> None:
         text = (ROOT / "scripts/run_local.sh").read_text()

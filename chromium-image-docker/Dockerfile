@@ -21,7 +21,6 @@ ENV DISPLAY=:0
 ENV VNC_PORT=5900
 ENV NOVNC_PORT=6080
 ENV VNC_SCREEN=1366x900x24
-ENV AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222
 
 ARG WOOTZ_UID=1200
 ARG WOOTZ_GID=1200
@@ -102,13 +101,7 @@ WORKDIR /opt/agent-browser
 COPY --from=agent_browser package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm ci --omit=dev \
-    && ln -sf /opt/agent-browser/node_modules/.bin/agent-browser /usr/local/bin/agent-browser-core \
-    && agent-browser-core --version
-COPY --from=agent_browser bin/ ./bin/
-COPY --from=agent_browser lib/ ./lib/
-COPY --from=agent_browser prompts/ ./prompts/
-RUN chmod 0755 /opt/agent-browser/bin/agent-browser-desktop.mjs \
-    && ln -sf /opt/agent-browser/bin/agent-browser-desktop.mjs /usr/local/bin/agent-browser \
+    && ln -sf /opt/agent-browser/node_modules/.bin/agent-browser /usr/local/bin/agent-browser \
     && agent-browser --version
 
 WORKDIR /home/wootz

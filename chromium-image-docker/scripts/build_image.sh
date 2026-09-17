@@ -16,7 +16,7 @@ if [ ! -x "${BUILD_DIR}/chrome" ]; then
   exit 1
 fi
 
-for required in package.json package-lock.json bin/agent-browser-desktop.mjs; do
+for required in package.json package-lock.json; do
   if [ ! -f "${AGENT_BROWSER_DIR}/${required}" ]; then
     echo "Missing agent-browser build input: ${AGENT_BROWSER_DIR}/${required}" >&2
     exit 1

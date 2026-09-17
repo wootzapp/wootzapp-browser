@@ -1,114 +1,63 @@
-# Agent-browser runtime
+# Agent-browser action runtime
 
-This directory provides the agent-browser runner included in the Wootzapp
-Desktop Browser image.
+This directory pins the official agent-browser CLI included in the Wootzapp
+Desktop Browser image. The CLI connects to w8-core over CDP and provides
+browser observations and actions.
 
-It does not start the browser itself. The image entrypoint starts w8-core, and
-agent-browser connects to that running browser through the container's CDP
-endpoint. The same runner can also be installed and used from the host for
-development.
+## Responsibility boundary
 
-## How it connects
+The image provides:
 
-The normal browser Docker flow starts the browser container and exposes CDP on the host.
+- w8-core and ChromiumRL
+- the CDP service
+- Node.js
+- the pinned official agent-browser action CLI
 
-Default host CDP endpoint:
+The calling harness provides:
 
-```text
-http://127.0.0.1:9222
-```
+- the AI model and provider client
+- prompts and response parsing
+- action limits, timeouts, retries, and stopping rules
+- recording and evaluation logic
 
-agent-browser attaches to that endpoint and sends browser actions through CDP.
+No model SDK, model name, API credential, prompt, or agent loop is embedded in
+this directory or the browser image. A harness can therefore use GPT, Gemini,
+Claude, Fara, a local model, or any other policy that can choose actions.
 
-```text
-running browser container -> CDP 9222 -> standalone agent-browser
-```
+## Version
 
-## Run from the browser image
+package-lock.json pins agent-browser to version 0.27.3. Node.js 24 is provided
+by the browser image because that version of agent-browser requires Node.js 24
+or newer.
 
-Build and start the image as documented in `../chromium-image-docker/README.md`,
-then check the embedded commands:
+## Use from the browser image
 
-```bash
-docker compose -f ../chromium-image-docker/compose.yaml exec w8-core agent-browser --version
-docker compose -f ../chromium-image-docker/compose.yaml exec w8-core agent-browser-core --version
-```
+Build and start the image as documented in chromium-image-docker/README.md,
+then verify the CLI:
 
-## Install dependencies on the host
+    docker compose -f ../chromium-image-docker/compose.yaml exec w8-core \
+      agent-browser --version
 
-From the repository root:
+The browser listens on port 9222 inside the container. A harness can invoke the
+bundled CLI directly, for example:
 
-```bash
-cd agent-browser
-npm install
-```
+    docker compose -f ../chromium-image-docker/compose.yaml exec w8-core \
+      agent-browser --cdp http://127.0.0.1:9222 snapshot --interactive --json
 
-## Configure credentials
+The harness should call the corresponding agent-browser commands for actions
+such as click, fill, type, press, scroll, and navigation. It should pass the
+selected action; agent-browser does not select actions or call a model.
 
-Copy the example environment file:
+## Use from a host harness
 
-```bash
-cp .env.example .env.agent-browser
-```
+A harness may instead install the pinned package from this directory and connect
+to the host-mapped CDP port:
 
-Set at least:
+    cd agent-browser
+    npm ci
+    ./node_modules/.bin/agent-browser \
+      --cdp http://127.0.0.1:9222 snapshot --interactive --json
 
-```env
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=your_model_name
-AGENT_BROWSER_MAX_STEPS=your_harness_step_limit
-AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222
-```
-
-The image does not choose a model or action limit. The calling harness must set
-both values for OpenAI task mode. Do not commit real API keys.
-
-## Start the browser
-
-Start Wootzapp Desktop Browser through the normal Docker runtime:
-
-```bash
-cd chromium-image-docker
-docker compose up -d
-```
-
-Check that CDP is reachable:
-
-```bash
-curl http://127.0.0.1:9222/json/version
-```
-
-## Run a task
-
-From the repository root:
-
-```bash
-cd agent-browser
-set -a
-. ./.env.agent-browser
-set +a
-node ./bin/agent-browser-desktop.mjs task "go to https://example.com and summarize the page"
-```
-
-Or run directly with environment variables:
-
-```bash
-cd agent-browser
-OPENAI_API_KEY="$OPENAI_API_KEY" \
-OPENAI_MODEL="$OPENAI_MODEL" \
-AGENT_BROWSER_MAX_STEPS="$AGENT_BROWSER_MAX_STEPS" \
-AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222 \
-node ./bin/agent-browser-desktop.mjs task "go to https://example.com and summarize the page"
-```
-
-## What happens
-
-The task runner:
-
-1. connects to the already-running browser through CDP
-2. takes a browser snapshot
-3. sends the snapshot and task instruction to the configured model
-4. executes one browser action through agent-browser core
-5. repeats until the task is complete or the step limit is reached
-
-Normal browser usage is unchanged. agent-browser only runs when explicitly invoked.
+The host port is controlled by the Docker runtime's CDP_PORT setting. No
+provider credentials are needed by agent-browser for observation or action
+commands.
