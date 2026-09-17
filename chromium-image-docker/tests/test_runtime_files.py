@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RuntimeImageFilesTest(unittest.TestCase):
-    def test_browser_only_runtime_files(self) -> None:
+    def test_runtime_files(self) -> None:
         expected = {
             "compose.yaml",
             "image/usr/local/bin/chromium-runtime-entrypoint",
@@ -27,10 +27,15 @@ class RuntimeImageFilesTest(unittest.TestCase):
         self.assertNotIn("capture)", text)
         self.assertNotIn("smoke)", text)
 
-    def test_dockerfile_copies_only_payload_and_runtime_overlay(self) -> None:
+    def test_dockerfile_includes_browser_and_agent_runtime(self) -> None:
         text = (ROOT / "Dockerfile").read_text()
         self.assertIn("COPY --chown=wootz:wootz build/ /opt/wootzapp/", text)
         self.assertIn("COPY --chmod=0755 image/ /", text)
+        self.assertIn("FROM node:24-bookworm-slim AS node-runtime", text)
+        self.assertIn("COPY --from=agent_browser package.json package-lock.json ./", text)
+        self.assertIn("npm ci --omit=dev", text)
+        self.assertIn("/usr/local/bin/agent-browser-core", text)
+        self.assertIn("/usr/local/bin/agent-browser", text)
         self.assertNotIn("chmod 0755 /opt/wootzapp/chrome", text)
         self.assertIn('ENTRYPOINT ["/usr/local/bin/chromium-runtime-entrypoint"]', text)
         self.assertIn('CMD ["serve"]', text)
@@ -52,6 +57,7 @@ class RuntimeImageFilesTest(unittest.TestCase):
         self.assertIn("${NOVNC_PORT:-6080}:6080", text)
         self.assertIn("w8-core:chromium-desktop", text)
         self.assertIn("chromium-runtime-entrypoint", text)
+        self.assertIn("agent_browser: ../agent-browser", text)
 
     def test_local_script_uses_standard_ports(self) -> None:
         text = (ROOT / "scripts/run_local.sh").read_text()

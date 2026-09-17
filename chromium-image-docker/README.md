@@ -1,6 +1,7 @@
 # w8-core Runtime
 
-This directory builds and runs the Docker runtime for w8-core.
+This directory builds and runs the Docker runtime for w8-core, ChromiumRL CDP,
+and the pinned agent-browser command-line runtime.
 
 The runtime starts w8-core, exposes Chrome DevTools Protocol, optionally starts a headed VNC/noVNC display stack, and provides health commands for automation.
 
@@ -24,6 +25,7 @@ The serve command:
 - starts Xvfb, VNC, and noVNC when headed mode is enabled
 - starts w8-core
 - starts a public CDP bridge
+- provides Node.js, `agent-browser`, and `agent-browser-core`
 - waits until CDP is ready
 - keeps the w8-core process alive
 
@@ -48,6 +50,9 @@ build/
 ```
 
 The build script checks that `build/chrome` exists and is executable before building the image.
+It also supplies `../agent-browser` as a named BuildKit context. That context is
+restricted by `agent-browser/.dockerignore`, so local environment files and
+dependencies cannot enter the image build context.
 
 ## Build the image
 
@@ -70,10 +75,12 @@ Override it with:
 CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop ./scripts/build_image.sh
 ```
 
-You can also build directly with Docker:
+You can also build directly with Buildx:
 
 ```bash
-docker build -t w8-core:chromium-desktop .
+docker buildx build --load \
+  --build-context agent_browser=../agent-browser \
+  -t w8-core:chromium-desktop .
 ```
 
 ## Run with Docker Compose
@@ -292,4 +299,30 @@ See the browser workflow README for details:
 
 ## Agent-browser
 
-Some images include optional `agent-browser` automation. When present, see `agent-browser/README.md`.
+The image includes the Wootz agent runner, the official agent-browser core
+pinned by `../agent-browser/package-lock.json`, and a compatible Node.js runtime.
+Both commands connect to the container's public CDP bridge by default:
+
+```text
+AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222
+```
+
+Check the installed commands:
+
+```bash
+docker compose exec w8-core node --version
+docker compose exec w8-core agent-browser --version
+docker compose exec w8-core agent-browser-core --version
+```
+
+Run task mode without storing a key in the image or Compose configuration:
+
+```bash
+docker compose exec \
+  -e OPENAI_API_KEY \
+  -e OPENAI_MODEL \
+  w8-core \
+  agent-browser task "go to https://example.com and summarize the page"
+```
+
+See `../agent-browser/README.md` for runner behavior and configuration.

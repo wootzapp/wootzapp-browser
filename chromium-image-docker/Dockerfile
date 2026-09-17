@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1.7
+FROM node:24-bookworm-slim AS node-runtime
+
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -19,9 +21,19 @@ ENV DISPLAY=:0
 ENV VNC_PORT=5900
 ENV NOVNC_PORT=6080
 ENV VNC_SCREEN=1366x900x24
+ENV AGENT_BROWSER_CDP_TARGET=http://127.0.0.1:9222
+ENV AGENT_BROWSER_MAX_STEPS=20
 
 ARG WOOTZ_UID=1200
 ARG WOOTZ_GID=1200
+ARG IMAGE_VERSION=dev
+ARG VCS_REF=unknown
+
+LABEL org.opencontainers.image.title="w8-core Chromium desktop" \
+      org.opencontainers.image.description="Wootz desktop browser with ChromiumRL CDP and agent-browser" \
+      org.opencontainers.image.source="https://github.com/wootzapp/wootzapp-browser" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}"
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -78,6 +90,27 @@ RUN groupadd --gid "${WOOTZ_GID}" wootz \
 
 COPY --chown=wootz:wootz build/ /opt/wootzapp/
 COPY --chmod=0755 image/ /
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
+
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && node --version \
+    && npm --version
+
+WORKDIR /opt/agent-browser
+COPY --from=agent_browser package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm ci --omit=dev \
+    && ln -sf /opt/agent-browser/node_modules/.bin/agent-browser /usr/local/bin/agent-browser-core \
+    && agent-browser-core --version
+COPY --from=agent_browser bin/ ./bin/
+COPY --from=agent_browser lib/ ./lib/
+COPY --from=agent_browser prompts/ ./prompts/
+RUN chmod 0755 /opt/agent-browser/bin/agent-browser-desktop.mjs \
+    && ln -sf /opt/agent-browser/bin/agent-browser-desktop.mjs /usr/local/bin/agent-browser \
+    && agent-browser --version
 
 WORKDIR /home/wootz
 EXPOSE 9222 5900 6080

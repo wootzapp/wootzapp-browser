@@ -1,8 +1,12 @@
-# Standalone agent-browser runner
+# Agent-browser runtime
 
-This directory provides an optional agent-browser runner for Wootzapp Desktop Browser.
+This directory provides the agent-browser runner included in the Wootzapp
+Desktop Browser image.
 
-It does not start the browser and it is not part of the normal browser Docker runtime. The browser must already be running. agent-browser connects to that running browser through the browser's CDP endpoint.
+It does not start the browser itself. The image entrypoint starts w8-core, and
+agent-browser connects to that running browser through the container's CDP
+endpoint. The same runner can also be installed and used from the host for
+development.
 
 ## How it connects
 
@@ -20,7 +24,17 @@ agent-browser attaches to that endpoint and sends browser actions through CDP.
 running browser container -> CDP 9222 -> standalone agent-browser
 ```
 
-## Install dependencies
+## Run from the browser image
+
+Build and start the image as documented in `../chromium-image-docker/README.md`,
+then check the embedded commands:
+
+```bash
+docker compose -f ../chromium-image-docker/compose.yaml exec w8-core agent-browser --version
+docker compose -f ../chromium-image-docker/compose.yaml exec w8-core agent-browser-core --version
+```
+
+## Install dependencies on the host
 
 From the repository root:
 

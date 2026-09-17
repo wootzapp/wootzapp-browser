@@ -1,0 +1,9 @@
+*
+!package.json
+!package-lock.json
+!bin/
+!bin/**
+!lib/
+!lib/**
+!prompts/
+!prompts/**
