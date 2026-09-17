@@ -154,6 +154,13 @@ experimental domain ChromiumRL
     returns
       StructuredPageSnapshot afterSnapshot
       StructuredSnapshotDiff diff
+  # Builds structured model-facing DOM data from an already captured snapshot.
+  # This command does not read or mutate the live document.
+  command getModelDOM
+    parameters
+      StructuredPageSnapshot snapshot
+    returns
+      ModelDOM modelDOM
 
   # Start tracking DOM differences. The first call will report the initial state.
   command startDOMDiff
@@ -983,3 +990,15 @@ experimental domain ChromiumRL
       array of PageNode nodes
       StructuredSnapshotStats stats
       optional DOMDiffResult diff
+
+  # Structured browser-produced model projection. The host renderer performs
+  # only deterministic section joining; selection and grouping stay in Blink.
+  type ModelDOMSection extends object
+    properties
+      string name
+      array of string lines
+
+  type ModelDOM extends object
+    properties
+      string rendererName
+      array of ModelDOMSection sections
