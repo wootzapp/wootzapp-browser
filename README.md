@@ -1,274 +1,202 @@
 # w8-core
 
-w8-core is a Chromium-based desktop browser runtime for normal browsing, browser automation, browser-side capture, and repeatable authoring workflows.
+<img src="chromium-desktop/src/chrome/app/theme/chromium/wootzapp-icon.png" alt="Wootzapp logo" width="80" />
 
-w8-core can be started as a Dockerized desktop browser, used visually through noVNC, controlled through Chrome DevTools Protocol, and extended through ChromiumRL CDP commands for structured browser state capture.
+w8-core is Wootzapp's desktop browser for interactive browsing, browser automation, and session capture with offline replay. The Docker image includes the browser, a web-accessible desktop through noVNC, and the `agent-browser` CLI.
 
-## What you can do
+## Requirements
 
-- Run w8-core in headless mode for automation.
-- Run w8-core in headed mode and open it through noVNC.
-- Connect automation tools through CDP on port `9222`.
-- Use ChromiumRL CDP commands for browser observation and capture.
-- Use authoring capture mode to archive a web session.
-- Use authoring replay mode to replay a captured session offline.
-- Use optional agent-browser automation when the image includes it.
+Docker Engine must be running, with Docker Compose supporting `--wait`. The published image targets Linux `amd64`; ARM hosts require `amd64` emulation.
+
+```bash
+docker version
+docker compose version
+```
 
 ## Quick start
 
-From the repository root:
+The Docker files are [compose.yaml](chromium-image-docker/compose.yaml) and [.env.example](chromium-image-docker/.env.example) in `chromium-image-docker/`. To use the published image without a source checkout, copy these two files into a working directory and run the commands there.
+
+For an existing installation, see [existing containers](chromium-image-docker/README.md#existing-containers) before switching launch methods.
+
+From the repository root, enter the Docker directory and create your local configuration:
 
 ```bash
 cd chromium-image-docker
-docker compose up -d
+cp .env.example .env
 ```
 
-Check that w8-core is ready:
+The template contains:
+
+```env
+CHROMIUM_IMAGE_NAME=wootzapp/w8-core:latest
+CHROMIUM_HEADLESS=0
+CHROMIUM_RESET_PROFILE=0
+CHROMIUM_START_URL=about:blank
+AUTHORING_MODE=off
+AUTHORING_SESSION=my-session
+CDP_PORT=9222
+VNC_PORT=5900
+NOVNC_PORT=6080
+```
+
+Compose loads `.env` automatically. Edit this file to choose the startup page, display mode, ports, or authoring session. Exported shell variables with the same names take precedence.
+
+Pull the image and start the browser:
 
 ```bash
-docker compose exec w8-core chromium-runtime-entrypoint status
+docker compose pull
+docker compose up -d --no-build --wait
 ```
 
-Open the CDP version endpoint from the host:
+Open the [browser desktop](http://127.0.0.1:6080/vnc.html?host=127.0.0.1&port=6080&autoconnect=1&resize=scale) in your web browser. The start command waits for the browser to become healthy. Run all remaining commands from the same working directory.
 
-```text
-http://127.0.0.1:9222/json/version
+## Manage the browser
+
+Check status:
+
+```bash
+docker compose ps
 ```
 
-Stop w8-core:
+Stop the browser:
+
+```bash
+docker compose stop
+```
+
+Start it again:
+
+```bash
+docker compose start --wait
+```
+
+After changing `.env`, apply the new settings:
+
+```bash
+docker compose up -d --no-build --wait
+```
+
+Set `CHROMIUM_HEADLESS=1` for automation without a desktop. Browser data is kept in the `w8-core-profile` volume while `CHROMIUM_RESET_PROFILE=0`.
+
+To remove the container while keeping its profile:
 
 ```bash
 docker compose down
 ```
 
-## Build the Docker image
+`docker compose down -v` also deletes the profile volume, including saved authoring sessions.
 
-The Docker image requires a prepared w8-core payload under:
+## Capture and replay a session
 
-```text
-chromium-image-docker/build/
+Capture records network responses and selected browser state. Replay serves the recorded session offline. Keep the same profile volume and session name for both modes.
+
+### Capture
+
+Update these settings in `.env`, replacing the session name and URL as needed:
+
+```env
+AUTHORING_MODE=capture
+AUTHORING_SESSION=my-session
+CHROMIUM_START_URL=https://example.com
 ```
 
-At minimum, the payload must contain the w8-core executable:
-
-```text
-chromium-image-docker/build/chrome
-```
-
-Build the image:
+Start capture, then open the browser desktop and browse the pages and interactions you want to record:
 
 ```bash
-cd chromium-image-docker
-./scripts/build_image.sh
+docker compose up -d --no-build --wait
 ```
 
-Use a custom image name:
+### Replay
+
+Change `AUTHORING_MODE` in `.env` to `replay`, keeping the session name and startup URL unchanged:
+
+```env
+AUTHORING_MODE=replay
+```
+
+Apply the settings and revisit the recorded pages:
 
 ```bash
-CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop ./scripts/build_image.sh
+docker compose up -d --no-build --wait
 ```
 
-## Run in headless mode
+To resume normal browsing, set `AUTHORING_MODE=off` and run the same command. See the [authoring guide](chromium-desktop/README.md) for recording verification and capture/replay behavior.
 
-Headless mode is the default and is useful for automation or CI.
+### Command-line alternative
+
+You can select a mode for a launch without editing `.env`.
+
+Capture:
 
 ```bash
-cd chromium-image-docker
-CHROMIUM_HEADLESS=1 docker compose up -d
+AUTHORING_MODE=capture \
+docker compose up -d --no-build --wait
 ```
 
-w8-core exposes CDP on the host at:
-
-```text
-127.0.0.1:9222
-```
-
-## Run in headed mode
-
-Headed mode starts w8-core with an Xvfb display, VNC, and noVNC.
+Replay, after completing the capture:
 
 ```bash
-cd chromium-image-docker
-CHROMIUM_HEADLESS=0 docker compose up -d
+AUTHORING_MODE=replay \
+docker compose up -d --no-build --wait
 ```
 
-Open noVNC:
+Both commands reuse the session, startup URL, and profile settings from `.env`. The override applies only to that command; later launches use the mode saved in `.env`.
 
-```text
-http://127.0.0.1:6080/vnc.html?host=127.0.0.1&port=6080&autoconnect=1&resize=scale
-```
+For direct browser launches, the flags are `--wootz-authoring-capture` or `--wootz-authoring-replay`, together with `--wootz-authoring-session=<session>`. See the [native browser examples](chromium-desktop/README.md#native-browser-flags).
 
-Default runtime ports:
+## Browser automation
 
-```text
-CDP:   9222
-VNC:   5900
-noVNC: 6080
-```
+The default connections are:
 
-## Start on a specific page
+| Interface | Address |
+|---|---|
+| DevTools Protocol (CDP) | `http://127.0.0.1:9222/json/version` |
+| Browser desktop (noVNC) | `http://127.0.0.1:6080/vnc.html` |
+| VNC client | `127.0.0.1:5900` |
 
-Use `CHROMIUM_START_URL` to choose the initial page:
+Use `webSocketDebuggerUrl` from the CDP endpoint with your CDP client. If you change a port in `.env`, use that port in the corresponding address. Ports are bound to the Docker host's loopback address; forward them through SSH or your editor when Docker runs on a remote host.
+
+Check the bundled `agent-browser` version and capture an interactive page snapshot:
 
 ```bash
-cd chromium-image-docker
-CHROMIUM_START_URL=https://example.com docker compose up -d
+docker compose exec w8-core agent-browser --version
+docker compose exec w8-core agent-browser --cdp 9222 \
+  snapshot --interactive --json
 ```
 
-Use `CHROMIUM_EXTRA_ARGS` for additional Chromium flags:
+See the [integration guide](agent-browser/README.md) for additional usage and host integration. An integrating application supplies its own AI model and chooses the actions.
 
-```bash
-CHROMIUM_EXTRA_ARGS="--disable-features=SomeFeature" docker compose up -d
-```
+## ChromiumRL protocol
 
-## Runtime commands
-
-The container entrypoint is `chromium-runtime-entrypoint`.
-
-Useful commands inside the running container:
-
-```bash
-chromium-runtime-entrypoint status
-chromium-runtime-entrypoint wait --timeout 30
-chromium-runtime-entrypoint version
-```
-
-With Docker Compose:
-
-```bash
-docker compose exec w8-core chromium-runtime-entrypoint status
-docker compose exec w8-core chromium-runtime-entrypoint wait --timeout 30
-docker compose exec w8-core chromium-runtime-entrypoint version
-```
-
-## CDP automation
-
-w8-core starts Chromium's private debugging endpoint inside the container and exposes a public CDP bridge on port `9222`.
-
-Use this host endpoint for automation tools:
-
-```text
-http://127.0.0.1:9222/json/version
-```
-
-Most CDP clients can connect by reading the `webSocketDebuggerUrl` from that endpoint.
-
-## ChromiumRL CDP
-
-ChromiumRL CDP is a custom DevTools Protocol domain exposed by w8-core.
-
-It provides browser-side commands for structured capture and observation, including:
+The ChromiumRL CDP domain provides structured observations, snapshots, and comparisons. Its commands are:
 
 ```text
 ChromiumRL.enable
+ChromiumRL.disable
 ChromiumRL.getTouchTraces
 ChromiumRL.getLayoutTimings
 ChromiumRL.getCLSAttribution
 ChromiumRL.getCompositorLayers
 ChromiumRL.captureInteraction
+ChromiumRL.getVisualHash
 ChromiumRL.captureStateSnapshot
 ChromiumRL.computeStateDiff
 ChromiumRL.saveDOMState
 ChromiumRL.compareDOMState
 ChromiumRL.getAgentObservation
 ChromiumRL.captureStructuredSnapshot
+ChromiumRL.compareStructuredSnapshots
+ChromiumRL.captureSnapshotDiff
 ChromiumRL.getModelDOM
 ChromiumRL.startDOMDiff
 ChromiumRL.stopDOMDiff
 ```
 
-`ChromiumRL.getModelDOM` builds structured model-facing DOM data from a
-snapshot previously captured with `ChromiumRL.captureStructuredSnapshot`. It
-takes the captured `StructuredPageSnapshot` as input and returns a `ModelDOM`
-value containing a renderer name and a list of named sections. The command
-works only on the captured snapshot; it does not read or mutate the live
-document.
+Parameters and response types are defined in the [protocol schema](chromium-patch/src/third_party/blink/public/devtools_protocol/domains/ChromiumRL.pdl).
 
-Typical ChromiumRL usage:
+## Further documentation
 
-```text
-1. Start the w8-core runtime.
-2. Connect to CDP on 127.0.0.1:9222.
-3. Send ChromiumRL commands through a CDP client.
-4. Store or process the returned browser state in your tool.
-```
-
-## Authoring capture
-
-Authoring capture records browser-side network responses and related browser state for a named session.
-
-Start capture mode:
-
-```bash
-cd chromium-image-docker
-
-AUTHORING_MODE=capture AUTHORING_SESSION=my-session CHROMIUM_START_URL=https://example.com CHROMIUM_HEADLESS=0 docker compose up -d
-```
-
-Capture mode records HTTP/HTTPS responses, redirects, response payloads, selected browser state, and same-document SPA routes.
-
-## Authoring replay
-
-Authoring replay serves a previously captured session back through w8-core.
-
-Start replay mode:
-
-```bash
-cd chromium-image-docker
-
-AUTHORING_MODE=replay AUTHORING_SESSION=my-session CHROMIUM_START_URL=https://example.com CHROMIUM_HEADLESS=0 docker compose up -d
-```
-
-Replay mode loads the captured session, restores captured state, serves matching captured responses, and avoids silently falling back to the live network on strict replay misses.
-
-## Optional agent-browser automation
-
-Some browser images include optional `agent-browser` support for model-driven browser automation.
-
-When available, provide model credentials at runtime and run a natural-language task inside the existing w8-core container:
-
-```bash
-cd chromium-image-docker
-
-docker compose --env-file .env.agent-browser up -d
-
-docker compose --env-file .env.agent-browser exec w8-core   agent-browser task "go to https://example.com and summarize the page"
-```
-
-agent-browser is not started automatically. Normal browsing and authoring workflows are unchanged unless this command is explicitly run.
-
-## Common environment variables
-
-```env
-CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop
-CHROMIUM_CONTAINER_NAME=w8-core-browser-engine
-CHROMIUM_HEADLESS=1
-CHROMIUM_RESET_PROFILE=1
-CHROMIUM_START_URL=about:blank
-CHROMIUM_EXTRA_ARGS=
-CDP_PORT=9222
-VNC_PORT=5900
-NOVNC_PORT=6080
-AUTHORING_MODE=off
-AUTHORING_SESSION=default
-```
-
-## More documentation
-
-Runtime details:
-
-```text
-chromium-image-docker/README.md
-```
-
-Browsing, capturing, and authoring details:
-
-```text
-chromium-desktop/README.md
-```
-
-Optional agent-browser details, when included:
-
-```text
-agent-browser/README.md
-```
+- [Environment settings, logs, and local image builds](chromium-image-docker/README.md)
+- [Recording verification and replay behavior](chromium-desktop/README.md)
+- [agent-browser observations and actions](agent-browser/README.md)

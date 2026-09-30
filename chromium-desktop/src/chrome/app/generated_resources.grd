@@ -1753,7 +1753,7 @@ are declared in tools/grit/grit_args.gni.
           Name &amp;window...
         </message>
         <message name="IDS_CHROMELABS" desc="The text label of the Chrome Labs menu item">
-          Chrome &amp;Labs...
+          w8-core &amp;Labs...
         </message>
       </if>
       <if expr="use_titlecase">
@@ -1809,7 +1809,7 @@ are declared in tools/grit/grit_args.gni.
           Name &amp;Window...
         </message>
         <message name="IDS_CHROMELABS" desc="In Title Case: The text label of the Chrome Labs menu item">
-          Chrome &amp;Labs...
+          w8-core &amp;Labs...
         </message>
       </if>
 
@@ -3028,7 +3028,7 @@ are declared in tools/grit/grit_args.gni.
       </message>
       <message name="IDS_DOWNLOAD_BUBBLE_ESB_PROMO"
                desc="Text for the in-product-help bubble shown for the esb promo download bubble.">
-        Chrome just blocked a dangerous file from downloading. Get even stronger security with enhanced protection.
+        w8-core just blocked a dangerous file from downloading. Get even stronger security with enhanced protection.
       </message>
       <message name="IDS_DOWNLOAD_BUBBLE_ESB_PROMO_CUSTOM_ACTION"
                desc="Text for the custom action within the in-product-help bubble shown for the esb promo download bubble.">
@@ -3436,7 +3436,7 @@ are declared in tools/grit/grit_args.gni.
       </message>
       <if expr="_google_chrome">
         <message name="IDS_DOWNLOAD_ROW_ESB_PROMOTION" desc="Link button text that teaches the user about Enhanced Protection.">
-          Discover enhanced protection to get Chrome's highest level of security for downloads
+          Discover enhanced protection to get w8-core's highest level of security for downloads
         </message>
         <message name="IDS_DOWNLOAD_ROW_ESB_PROMO_A11Y" desc="ARIA (accessibility) label describing a link which opens in a new tab.">
           Opens security settings page in a new tab
@@ -3546,7 +3546,7 @@ are declared in tools/grit/grit_args.gni.
       </message>
       <message name="IDS_DOWNLOAD_LOCAL_DECRYPTION_PROMPT_ALERT"
                desc="Accessible alert announced when a local decryption prompt appears on a suspicious archive">
-        <ph name="FILENAME">$1<ex>bla.exe</ex></ph> may be dangerous. Add a password if you want Chrome to verify it or you can download it directly.
+        <ph name="FILENAME">$1<ex>bla.exe</ex></ph> may be dangerous. Add a password if you want w8-core to verify it or you can download it directly.
       </message>
 
       <!-- Web App Window Title string -->
@@ -3774,7 +3774,7 @@ are declared in tools/grit/grit_args.gni.
           Quit
         </message>
         <message name="IDS_QUIT_WITH_APPS_EXPLANATION" desc="Text displayed in a notification explaining that Chrome will continue running in the background as long as there are Chrome Apps open.">
-          Chrome will keep running while Chrome Apps are open.
+          w8-core will keep running while Chrome Apps are open.
         </message>
         <message name="IDS_QUIT_WITH_APPS_QUIT_LABEL" desc="Button text to quit all running Chrome apps.">
           Quit all Chrome Apps
@@ -4180,7 +4180,7 @@ are declared in tools/grit/grit_args.gni.
         Notifications from this site may be disruptive
       </message>
       <message name="IDS_NOTIFICATIONS_QUIET_PERMISSION_BUBBLE_PREDICTION_SERVICE_DESCRIPTION" desc="Text used as notification message when requesting permission for Web Notifications via a notification. Used when the prediction service has decided that the user will be very unlikely to grant this permission.">
-        Chrome thinks you don't want notifications from this site. So, requests are hidden to reduce interruptions.
+        w8-core thinks you don't want notifications from this site. So, requests are hidden to reduce interruptions.
       </message>
       <message name="IDS_GEOLOCATION_OFF_EXPLANATORY_TEXT" desc="Explanatory animated text that appears (and then disappears) in the address bar as part of the less-prominent UX, when a website requests the geolocation permission.">
         Location blocked
@@ -4189,7 +4189,7 @@ are declared in tools/grit/grit_args.gni.
         Location blocked
       </message>
       <message name="IDS_GEOLOCATION_QUIET_PERMISSION_BUBBLE_PREDICTION_SERVICE_DESCRIPTION" desc="Text used as notification message when requesting permission for Geolocation. Used when the prediction service has decided that the user will be very unlikely to grant this permission.">
-        Chrome thinks you don't want to use your location on this site. So, requests are hidden to reduce interruptions.
+        w8-core thinks you don't want to use your location on this site. So, requests are hidden to reduce interruptions.
       </message>
       <message name="IDS_GEOLOCATION_QUIET_PERMISSION_BUBBLE_ALLOW_BUTTON" desc="Text displayed on the button that enables geolocation for a site. This button is part of the geolocation status bubble, which is triggered when a user clicks on the blocked geolocation icon in the omnibox.">
         Allow for this site
@@ -4706,7 +4706,7 @@ are declared in tools/grit/grit_args.gni.
         Allow remote debugging?
       </message>
       <message name="IDS_DEV_TOOLS_CONNECTION_DIALOG_MESSAGE_PART_1" desc="Message displayed in the dialog asking user to confirm allowing a debugging connection to this browser instance.">
-        An external app wants full control over this Chrome session to debug it. This includes access to your saved data, cookies and site data, and the ability to navigate to any URL.
+        An external app wants full control over this w8-core session to debug it. This includes access to your saved data, cookies and site data, and the ability to navigate to any URL.
       </message>
       <message name="IDS_DEV_TOOLS_CONNECTION_DIALOG_MESSAGE_PART_2" desc="Message displayed in the dialog asking user to confirm allowing a debugging connection to this browser instance.">
         Only web developers should turn on this feature, and only use it with trusted apps.
@@ -5093,7 +5093,7 @@ are declared in tools/grit/grit_args.gni.
         Omnibox
       </message>
       <message name="IDS_UTILITY_PROCESS_FILE_UTILITY_NAME" desc="The name of the utility process used for various Chrome specific file operations.">
-          Chrome File Utilities
+          w8-core File Utilities
       </message>
       <if expr="not is_android">
         <message name="IDS_UTILITY_PROCESS_PROFILE_IMPORTER_NAME" desc="The name of the utility process used for importing profiles.">
@@ -5129,7 +5129,7 @@ are declared in tools/grit/grit_args.gni.
         No-op Service
       </message>
       <message name="IDS_SERVICE_PROCESS_DOCUMENT_ANALYSIS_NAME" desc="The name of the service process used for document analysis operations as part of Safe Browsing.">
-        Chrome Document Analysis
+        w8-core Document Analysis
       </message>
       <!-- Theme preview infobar -->
       <message name="IDS_THEME_INSTALL_INFOBAR_LABEL" desc="Text displayed on an infobar when a theme has been installed.">
@@ -6145,13 +6145,13 @@ Keep your key file in a safe place. You will need it to create new versions of y
         "<ph name="EXTENSION_NAME">$1<ex>Babylon Toolbar</ex></ph>" added
       </message>
       <message name="IDS_EXTENSION_EXTERNAL_INSTALL_ALERT_BUBBLE_HEADING_APP" desc="The heading text (below the title) for the bubble that alerts the user that a new external app was installed.">
-        Another program on your computer added an app that may change the way Chrome works.
+        Another program on your computer added an app that may change the way w8-core works.
       </message>
       <message name="IDS_EXTENSION_EXTERNAL_INSTALL_ALERT_BUBBLE_HEADING_EXTENSION" desc="The heading text (below the title) for the bubble that alerts the user that a new external extension was installed.">
-        Another program on your computer added an extension that may change the way Chrome works.
+        Another program on your computer added an extension that may change the way w8-core works.
       </message>
       <message name="IDS_EXTENSION_EXTERNAL_INSTALL_ALERT_BUBBLE_HEADING_THEME" desc="The heading text (below the title) for the bubble that alerts the user that a new external theme was installed.">
-        Another program on your computer added a theme that may change the way Chrome works.
+        Another program on your computer added a theme that may change the way w8-core works.
       </message>
 
       <message name="IDS_EXTENSIONS_ADDED_WITHOUT_KNOWLEDGE" desc="Text shown in the extensions settings for items that might have been forcefully added to Chrome without the user's knowledge">
@@ -6674,7 +6674,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
       </message>
 
       <message name="IDS_APP_HOME_REMOVE_APP" desc="Menu entry label for removing an app from context menu on App Home that isn't locally installed">
-        Remove from Chrome
+        Remove from w8-core
       </message>
 
       <message name="IDS_APP_HOME_APP_SETTINGS" desc="Menu entry label for navigation to App Settings page for an app from context menu on App Home">
@@ -7082,7 +7082,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
       </message>
 
       <message name="IDS_BAD_FLAGS_FROM_FILE_WARNING_MESSAGE" desc="Message shown when command-line flags are loaded from a file. [Keep it short so it fits in the infobar.]">
-        Chrome is loading flags from a command-line file. Stability and security may be affected.
+        w8-core is loading flags from a command-line file. Stability and security may be affected.
       </message>
 
       <!-- Bad Environment Variables Infobar-->
@@ -7663,7 +7663,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
         Cards
       </message>
       <message name="IDS_NTP_CUSTOMIZE_NO_BACKGROUND_LABEL" desc="The label for the 'Default Chrome' tile in the customization menu on the New Tab Page">
-        Default Chrome
+        Default w8-core
       </message>
       <message name="IDS_NTP_CUSTOMIZE_CHROME_CHANGE_THEME_LABEL" desc="The label for the action button for changing Chrome theme in the New Tab Page customize chrome side panel.">
         Change theme
@@ -7684,7 +7684,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
         <ph name="THIRD_PARTY_NTP_MANAGER">$1<ex>ZomboCom</ex></ph> is managing your new tab page, opens in a new tab
       </message>
       <message name="IDS_NTP_CUSTOMIZE_CHROME_RESET_TO_CLASSIC_CHROME_COMPLETE" desc="Text for a screenreader to read aloud when the user's theme has finished changing to classic chrome in the Customize Chrome side panel.">
-        Theme updated to Default Chrome
+        Theme updated to Default w8-core
       </message>
       <message name="IDS_NTP_CUSTOMIZE_CHROME_RESET_TO_UPLOADED_IMAGE_COMPLETE" desc="Text for a screenreader to read aloud when the user's theme has finished changing to an uploaded image in the Customize Chrome side panel.">
         Theme updated to uploaded image
@@ -8652,10 +8652,10 @@ Keep your key file in a safe place. You will need it to create new versions of y
         <ph name="MODULE_NAME">$1<ex>Make Chrome Yours</ex></ph> hidden
       </message>
       <message name="IDS_NTP_MODULES_SETUP_LIST_INFO" desc="Text shown in the body of the info dialog of the Make Chrome Yours card.">
-        You're seeing suggestions on how to personalize Chrome and make it more powerful for your daily needs.
+        You're seeing suggestions on how to personalize w8-core and make it more powerful for your daily needs.
         <ph name="BREAK">&lt;br&gt;</ph>
         <ph name="BREAK">&lt;br&gt;</ph>
-        You can manage settings from the card menu or see more options in Customize Chrome.
+        You can manage settings from the card menu or see more options in Customize w8-core.
       </message>
       <message name="IDS_NTP_MODULES_INFO_BUTTON_TITLE" desc="Text shown in tooltip of info button of an NTP module.">
         About this card
@@ -8739,7 +8739,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
         You’re seeing suggested files to help you easily get back to your most recent activity in Google Drive.
         <ph name="BREAK">&lt;br&gt;</ph>
         <ph name="BREAK">&lt;br&gt;</ph>
-        You can manage settings from the card menu or see more options in Customize Chrome.
+        You can manage settings from the card menu or see more options in Customize w8-core.
       </message>
       <message name="IDS_NTP_MODULES_DRIVE_SEE_MORE" desc="A label for the see more button in the Drive module.">
         See more
@@ -8787,7 +8787,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
         You’re seeing your calendar to help you easily navigate to your next event in Google Calendar.
         <ph name="BREAK">&lt;br&gt;</ph>
         <ph name="BREAK">&lt;br&gt;</ph>
-        You can manage settings from the card menu or see more options in Customize Chrome.
+        You can manage settings from the card menu or see more options in Customize w8-core.
       </message>
       <message name="IDS_NTP_MODULES_GOOGLE_CALENDAR_MORE_ACTIONS" desc="Text shown on the tooltip for the 3 dot menu on the Google Calendar card on the NTP.">
         More actions for Google Calendar
@@ -8814,7 +8814,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
        You’re seeing your calendar to help you easily navigate to your next event in Outlook Calendar.
        <ph name="BREAK">&lt;br&gt;</ph>
        <ph name="BREAK">&lt;br&gt;</ph>
-       You can manage settings from the card menu or see more options in Customize Chrome.
+       You can manage settings from the card menu or see more options in Customize w8-core.
      </message>
       <message name="IDS_NTP_MODULES_CALENDAR_DOUBLE_BOOKED" desc="Text displaying that the calendar event is booked at the same time as another." meaning="The meeting takes place at the same time as another.">
         Double-Booked
@@ -8883,13 +8883,13 @@ Keep your key file in a safe place. You will need it to create new versions of y
         You’re seeing pages you've visited and suggested searches to help you easily get back to your most recent activity.
         <ph name="BREAK">&lt;br&gt;</ph>
         <ph name="BREAK">&lt;br&gt;</ph>
-        You can manage settings from the card menu or see more options in Customize Chrome.
+        You can manage settings from the card menu or see more options in Customize w8-core.
       </message>
       <message name="IDS_NTP_MODULES_HISTORY_CLUSTERS_WITH_DISCOUNT_INFO" desc="Text shown in the body of the info dialog of the history clusters module when the cluster has available discount.">
         You’re seeing suggested searches and shopping discounts that might interest you based on your recent activity.
         <ph name="BREAK">&lt;br&gt;</ph>
         <ph name="BREAK">&lt;br&gt;</ph>
-        You can manage settings from this card anytime or see more options in Customize Chrome.
+        You can manage settings from this card anytime or see more options in Customize w8-core.
       </message>
       <message name="IDS_NTP_MODULES_HISTORY_CLUSTERS_SENTENCE2" desc="Variant of the name of the History Clusters module in sentence case shown in various UIs.">
         Journeys
@@ -8925,7 +8925,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
         You’re seeing tabs from other devices to help you easily get back to your most recent activity.
         <ph name="BREAK">&lt;br&gt;</ph>
         <ph name="BREAK">&lt;br&gt;</ph>
-        You can manage settings from the card menu or see more options in Customize Chrome.
+        You can manage settings from the card menu or see more options in Customize w8-core.
       </message>
       <message name="IDS_NTP_MODULES_TAB_RESUMPTION_MULTI_DISMISS" desc="String text for module dismissal in the Tab Resumption module.">
         Tabs hidden
@@ -8961,7 +8961,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
         You’re seeing your recently used tab groups to help you easily pick up where you left off.
         <ph name="BREAK">&lt;br&gt;</ph>
         <ph name="BREAK">&lt;br&gt;</ph>
-        You can manage settings from the card menu or see more options in Customize Chrome.
+        You can manage settings from the card menu or see more options in Customize w8-core.
       </message>
       <message name="IDS_NTP_MODULES_TAB_GROUPS_TITLE" desc="Title for Tab Groups NTP module on the new tab page.">
         Your tab groups
@@ -9004,10 +9004,10 @@ Keep your key file in a safe place. You will need it to create new versions of y
 
       <!-- Mobile NTP Middle Slot Promo -->
       <message name="IDS_NTP_MOBILE_PROMO_HEADER" desc="Header for a promo that shows on the Desktop NTP prompting user to scan a QR code with their mobile device">
-        Get Chrome on your mobile device
+        Get w8-core on your mobile device
       </message>
       <message name="IDS_NTP_MOBILE_PROMO_DESCRIPTION" desc="Description for a promo that shows on the Desktop NTP prompting user to scan a QR code with their mobile device">
-        Download Chrome for iOS to access your tabs, bookmarks and passwords on your phone.
+        Download w8-core for iOS to access your tabs, bookmarks and passwords on your phone.
       </message>
       <message name="IDS_NTP_MOBILE_PROMO_QR_CODE_LABEL" desc="Accessibility label for a QR code that shows on the Desktop NTP that prompts the user to scan it.">
         Scan QR Code
@@ -9221,7 +9221,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
         Please try again later
       </message>
       <message name="IDS_SHOW_CUSTOMIZE_CHROME_SIDE_PANEL" desc="The title of the menu item for showing the Customize Chrome side panel.">
-        Customize Chrome
+        Customize w8-core
       </message>
       <if expr="use_titlecase">
         <message name="IDS_SHOW_CUSTOMIZE_CHROME_TOOLBAR" desc="The title of the menu item for showing the toolbar section of the Customize Chrome side panel.">
@@ -10433,7 +10433,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
           Open
         </message>
         <message name="IDS_INTENT_PICKER_BUBBLE_VIEW_STAY_IN_CHROME" desc="Message contained in a button to continue the navigation within Chrome.">
-          Stay in Chrome
+          Stay in w8-core
         </message>
         <message name="IDS_INTENT_PICKER_BUBBLE_VIEW_INITIATING_ORIGIN" desc="The label for the initiating origin of the intent picker.">
           From <ph name="ORIGIN">$1<ex>https://google.com</ex></ph>
@@ -10486,7 +10486,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
             You can access it on Google Password Manager.
           </message>
           <message name="IDS_IOS_PASSWORD_PROMO_BUBBLE_FOOTER_DESCRIPTION_GENERIC" desc="The description for the iOS promo bubble footer which lets the user know how to use their saved passwords on their phone: download Chrome for iOS and sign in to their account.">
-            To use your saved passwords on your phone, download Chrome for iOS and sign in to your Google Account.
+            To use your saved passwords on your phone, download w8-core for iOS and sign in to your Google Account.
           </message>
         </if>
       </if>
@@ -10582,7 +10582,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
           You can find it in your Addresses and More
         </message>
         <message name="IDS_IOS_DESKTOP_ADDRESS_PROMO_BUBBLE_FOOTER_DESCRIPTION_QR" desc="The description for the iOS desktop address promo bubble footer which lets the user know how to use their saved addresses on their phone: follow the QR code, download Chrome for iOS and sign in to their account.">
-          Download Chrome with this QR code, and sign in to your Google Account.
+          Download w8-core with this QR code, and sign in to your Google Account.
         </message>
       </if>
 
@@ -10614,7 +10614,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
           You can access it in your Payment Methods
         </message>
         <message name="IDS_IOS_DESKTOP_PAYMENT_PROMO_BUBBLE_FOOTER_DESCRIPTION_QR" desc="The description for the iOS desktop payment promo bubble footer which lets the user know how to use their saved payment methods on their phone: follow the QR code, download Chrome for iOS and sign in to their account.">
-          Download Chrome with this QR code, and sign in to your Google Account.
+          Download w8-core with this QR code, and sign in to your Google Account.
         </message>
       </if>
 
@@ -10869,7 +10869,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
         Get back here fast by bookmarking this tab
       </message>
       <message name="IDS_CHROME_TIP" desc="Accessible name used by a screen reader for the in-product-help or tutorial bubble icon." is_accessibility_with_no_ui="true">
-        Chrome tip
+        w8-core tip
       </message>
       <message name="IDS_EXTENSIONS_MENU_IPH_ENTRY_POINT_TITLE" desc="">
         See what extensions can read or change a site
@@ -10891,7 +10891,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
          Enhance your browser with extensions
       </message>
       <message name="IDS_EXTENSIONS_ZERO_STATE_PROMO_CUSTOM_ACTION_IPH_DESCRIPTION" desc="Body text shown on the promotional UI appearing when the user has no extensions installed.">
-         Extensions are add-ons to Chrome that can help you stay organized, simplify tasks, and customize your browsing
+         Extensions are add-ons to w8-core that can help you stay organized, simplify tasks, and customize your browsing
       </message>
       <message name="IDS_EXTENSIONS_ZERO_STATE_PROMO_CUSTOM_ACTION_IPH_ACCEPT" desc="Text on the custom action button that opens a new tab to the Chrome Web Store.">
          Discover extensions
@@ -10945,7 +10945,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
         Open App settings
       </message>
       <message name="IDS_UPDATED_CONNECTION_SECURITY_INDICATORS_PROMO" desc="Text shown on promotional UI appearing next to the new omnibox connection security icon">
-        Your connection is always secure unless Chrome tells you otherwise
+        Your connection is always secure unless w8-core tells you otherwise
       </message>
       <message name="IDS_READING_LIST_IN_SIDE_PANEL_PROMO" desc="Text shown on promotional UI appearing next to the side panel button">
         Your reading list has moved to the new side panel. Try it here.
@@ -11059,10 +11059,10 @@ Keep your key file in a safe place. You will need it to create new versions of y
 
       <!-- Customize Chrome Tutorial Strings -->
       <message name="IDS_TUTORIAL_CUSTOMIZE_CHROME_START_TUTORIAL_IPH" desc="The description of the IPH to start the customize chrome tutorial">
-        Customize Chrome to give your browser a new look
+        Customize w8-core to give your browser a new look
       </message>
       <message name="IDS_TUTORIAL_CUSTOMIZE_CHROME_OPEN_SIDE_PANEL" desc="The description of the 'open side panel' step in customize chrome tutorial">
-        Click "Customize Chrome"
+        Click "Customize w8-core"
       </message>
       <message name="IDS_TUTORIAL_CUSTOMIZE_CHROME_CHANGE_THEME" desc="The description of the 'change theme' step in customize chrome tutorial">
         Click “Change theme” to explore themes inspired by artists, nature and more
@@ -11077,7 +11077,7 @@ Keep your key file in a safe place. You will need it to create new versions of y
         Click the back arrow to explore other options
       </message>
       <message name="IDS_TUTORIAL_CUSTOMIZE_CHROME_SUCCESS_BODY" desc="The description of the body text in the 'success' step in customize chrome tutorial">
-        You can now give your browser a new look at any time from the Customize Chrome menu
+        You can now give your browser a new look at any time from the Customize w8-core menu
       </message>
 
       <!-- Password Manager Tutorial Strings -->
@@ -11184,12 +11184,12 @@ Keep your key file in a safe place. You will need it to create new versions of y
          Show original content?
       </message>
       <message name="IDS_NEAR_OOM_REDUCTION_MESSAGE_DESCRIPTION" desc="The description of the message stating that the browser removed some content on the page using too much memory.">
-         To save memory, Chrome removed some content
+         To save memory, w8-core removed some content
       </message>
 
       <!-- Tailored Security Prompt for Unconsented users -->
       <message name="IDS_TAILORED_SECURITY_UNCONSENTED_MESSAGE_TITLE" desc="The title of the message asking if the user wants to enable Enhanced Safe Browsing">
-         Also turn on Enhanced Safe Browsing for this Chrome profile?
+         Also turn on Enhanced Safe Browsing for this w8-core profile?
       </message>
       <message name="IDS_TAILORED_SECURITY_UNCONSENTED_MESSAGE_ACCEPT" desc="The text on the 'accept' button when asking if the user wants to enable Enhanced Safe Browsing">
         Turn on
@@ -11291,10 +11291,10 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
           Use Google Password Manager to sign in faster to sites from any of your devices
         </message>
         <message name="IDS_PASSWORDS_SAVE_PRIMING_PROMO_BODY_NOT_SIGNED_IN" desc="Body of IPH prompting users to consider saving passwords">
-          To save strong passwords with Google Password Manager, sign in to Chrome
+          To save strong passwords with Google Password Manager, sign in to w8-core
         </message>
         <message name="IDS_PASSWORDS_SAVE_PRIMING_PROMO_SCREENREADER" is_accessibility_with_no_ui="true" desc="Screenreader text for IPH prompting users to consider saving passwords">
-          You can save passwords with Google Password Manager when you are signed in to Chrome
+          You can save passwords with Google Password Manager when you are signed in to w8-core
         </message>
         <message name="IDS_PASSWORDS_SAVE_RECOVERY_PROMO_BODY" desc="Body of IPH prompting users to reconsider saving passwords">
           To save your password to Google Password Manager, click the key
@@ -11599,10 +11599,10 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
         Delete browsing data
       </message>
       <message name="IDS_CLEAR_BROWSING_DATA_HISTORY_NOTICE" desc="A dialog informing the user that their Chrome browsing history was deleted, but other forms of history can still be found on Google My Activity.">
-        The selected data has been removed from Chrome and synced devices. Your Google Account may have other forms of browsing history like searches and activity from other Google services at <ph name="BEGIN_LINK">&lt;a target="_blank" href="$1"&gt;</ph>myactivity.google.com<ph name="END_LINK">&lt;/a&gt;</ph>.
+        The selected data has been removed from w8-core and synced devices. Your Google Account may have other forms of browsing history like searches and activity from other Google services at <ph name="BEGIN_LINK">&lt;a target="_blank" href="$1"&gt;</ph>myactivity.google.com<ph name="END_LINK">&lt;/a&gt;</ph>.
       </message>
       <message name="IDS_CLEAR_BROWSING_DATA_HISTORY_NOTICE_TITLE" desc="Title of a dialog that informs the user that the deletion of Chrome's browsing data has been completed.">
-        Deleted Chrome data
+        Deleted w8-core data
       </message>
       <message name="IDS_CLEAR_BROWSING_DATA_HISTORY_NOTICE_OK" desc="Button in a dialog that informs the user that the deletion of Chrome's browsing data has been completed.">
         Ok, got it
@@ -11635,7 +11635,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
       </message>
 
       <message name="IDS_ZOOMLEVELS_CHROME_ERROR_PAGES_LABEL" desc="Label for zoom level list entry for Chrome error pages.">
-        (Chrome error pages)
+        (w8-core error pages)
       </message>
 
       <message name="IDS_STORAGE_ACCESS_MANAGE_TEXT" desc="The text on the button to manage the StorageAcccess settings.">
@@ -12423,7 +12423,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
 
       <!-- Tab Group Deletion Dialog -->
       <message name="IDS_TAB_GROUP_DELETION_DIALOG_MISSING_EMAIL" desc="The email address used in the deletion dialog body when an email is missing.">
-        Chrome with this Google Account
+        w8-core with this Google Account
       </message>
       <message name="IDS_TAB_GROUP_DELETION_DIALOG_BODY_SYNCED_DELETE" desc="The body text for deleting a synced group or groups. Displayed in the Tab Group Deletion Dialog.">
         {GROUP_COUNT, plural,
@@ -13073,7 +13073,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
           Collaborate with others
         </message>
         <message name="IDS_DATA_SHARING_NEED_SIGN_IN_AND_SYNC_HISTORY_BODY" desc="The body of dialog that prompts users to sign in and opt in to history sync.">
-          To share tabs and collaborate with others, sign in to Chrome and sync your history and tabs. You’ll also get your passwords and more on all your devices.
+          To share tabs and collaborate with others, sign in to w8-core and sync your history and tabs. You’ll also get your passwords and more on all your devices.
         </message>
         <message name="IDS_DATA_SHARING_NEED_SYNC_HISTORY_BODY" desc="The body of dialog that prompts users to sign in and opt in to history sync.">
           To share tabs and collaborate with others, sync your history and tabs to <ph name="EMAIL">$1<ex>foo@gmail.com</ex></ph>
@@ -13100,13 +13100,13 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
           Make sure you trust the person that sent this invitation
         </message>
         <message name="IDS_DATA_SHARING_ORGANIZATION_DISALLOW_SIGN_IN_BODY" desc="The body text of the organization disallowing signin dialog.">
-          To share or join tab groups, you must be able to sign in to Chrome
+          To share or join tab groups, you must be able to sign in to w8-core
         </message>
         <message name="IDS_DATA_SHARING_ORGANIZATION_LIMIT_SAVE_BODY" desc="The body text of the organization limiting saving to account dialog.">
           When your organization limits saving to your Google Account, you can’t share or join tab groups
         </message>
         <message name="IDS_DATA_SHARING_SIGNED_OUT_BODY" desc="The body text of the dialog that prompts users to allow Chrome sign in.">
-          To share, join, and collaborate in tab groups, open settings and turn on Allow Chrome sign-in
+          To share, join, and collaborate in tab groups, open settings and turn on Allow w8-core sign-in
         </message>
         <message name="IDS_DATA_SHARING_SETTINGS" desc="The generic text on buttons that take users to Chrome settings page.">
           Settings
@@ -13287,7 +13287,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
           Relaunch to update
         </message>
         <message name="IDS_APP_MENU_BUTTON_UPDATE_ALT3" desc="Alternate short label next to app-menu button when an update is available.">
-          New Chrome available
+          New w8-core available
         </message>
       </if>
       <message name="IDS_APP_MENU_BUTTON_ERROR" desc="Short label next to app-menu button when the user needs to resolve something.">
@@ -13329,10 +13329,10 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
         <ph name="APP_NAME">$1<ex>html5rocks.com</ex></ph> is sharing a window and audio.
       </message>
       <message name="IDS_MEDIA_TAB_CAPTURE_NOTIFICATION_TEXT" desc="label used in screen capture notification UI to show the screen sharing status when the stream is consumed by the same app initiating the window picker">
-        <ph name="APP_NAME">$1<ex>html5rocks.com</ex></ph> is sharing a Chrome tab.
+        <ph name="APP_NAME">$1<ex>html5rocks.com</ex></ph> is sharing a w8-core tab.
       </message>
       <message name="IDS_MEDIA_TAB_CAPTURE_WITH_AUDIO_NOTIFICATION_TEXT" desc="label used in screen capture notification UI to show the screen sharing status when the stream is consumed by the same app initiating the window picker">
-        <ph name="APP_NAME">$1<ex>html5rocks.com</ex></ph> is sharing a Chrome tab and audio.
+        <ph name="APP_NAME">$1<ex>html5rocks.com</ex></ph> is sharing a w8-core tab and audio.
       </message>
       <message name="IDS_MEDIA_SCREEN_CAPTURE_NOTIFICATION_HIDE" desc="Text shown on a link that hides the notification that the screen is being captured.">
         Hide
@@ -13425,7 +13425,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
       <!-- Killed Tab Strings -->
       <if expr="is_chromeos">
         <message name="IDS_KILLED_TAB_BY_OOM_MESSAGE" desc="The message displayed on the killed tab page when the page was killed by an out of memory error.">
-          Either Chrome ran out of memory or the process for the webpage was terminated for some other reason.  To continue, reload or go to another page.
+          Either w8-core ran out of memory or the process for the webpage was terminated for some other reason.  To continue, reload or go to another page.
         </message>
       </if>
       <message name="IDS_KILLED_TAB_FEEDBACK_MESSAGE" desc="The text to auto-populate the feedback page with. The triple single quotes are needed to preserve the line break.">
@@ -13571,7 +13571,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
           This extension violates the Chrome Web Store policy.
         </message>
         <message name="IDS_EXTENSIONS_BLOCKLISTED_POTENTIALLY_UNWANTED" desc="The text explaining the reason for disabling extension or app. The extension in question might have been installed without user consent.">
-          Disabled by Chrome. This extension may be unsafe.
+          Disabled by w8-core. This extension may be unsafe.
         </message>
 
         <!-- Enhanced Safe Browsing CRX allowlist warning -->
@@ -13607,7 +13607,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
           <ph name="THIRD_PARTY_TOOL_NAME">$1<ex>SuperDuper PC Cleaner Pro</ex></ph> wants to reset your settings.
         </message>
         <message name="IDS_TRIGGERED_RESET_PROFILE_SETTINGS_EXPLANATION" desc="Dialog title for reset dialog triggered by a third party tool">
-          <ph name="THIRD_PARTY_TOOL_NAME">$1<ex>SuperDuper PC Cleaner Pro</ex></ph> wants to restore your Chrome settings to their original defaults. This will reset your homepage, new tab page and search engine, disable your extensions, and unpin all tabs. It will also clear other temporary and cached data, such as cookies, content and site data.
+          <ph name="THIRD_PARTY_TOOL_NAME">$1<ex>SuperDuper PC Cleaner Pro</ex></ph> wants to restore your w8-core settings to their original defaults. This will reset your homepage, new tab page and search engine, disable your extensions, and unpin all tabs. It will also clear other temporary and cached data, such as cookies, content and site data.
         </message>
         <message name="IDS_TRIGGERED_RESET_PROFILE_SETTINGS_DEFAULT_TOOL_NAME" desc="Default tool name when a reset was triggered but a name could not be found.">
           A cleanup tool
@@ -13699,7 +13699,7 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
         Shared Tab
       </message>
       <message name="IDS_TOOLBAR_BUTTON_SEND_TAB_TO_SELF_BUTTON_HINT_TEXT" desc="The hint text shown on received tab dialog shown from the toolbar button. Where 'THERE' is the device the user selected.">
-        Choose a device. Then, to see the page, open Chrome there.
+        Choose a device. Then, to see the page, open w8-core there.
       </message>
       <if expr="use_titlecase">
         <then>
@@ -13729,10 +13729,10 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
         <ph name="BEGIN_LINK">$1</ph>Your devices<ph name="END_LINK">$2</ph> · <ph name="EMAIL">$3<ex>foo@gmail.com</ex></ph>
       </message>
       <message name="IDS_SEND_TAB_TO_SELF_SIGN_IN_PROMO_LABEL" desc = "Text when a signed out user attempts to use send-tab-to-self, then sees a sign-in promo.">
-        To send this tab to another device, sign in to Chrome on both devices
+        To send this tab to another device, sign in to w8-core on both devices
       </message>
       <message name="IDS_SEND_TAB_TO_SELF_NO_TARGET_DEVICE_LABEL" desc = "Text shown when a user with no available target devices attempts to use send-tab-to-self.">
-        To send this tab to another device, sign in to Chrome there
+        To send this tab to another device, sign in to w8-core there
       </message>
       <message name="IDS_SEND_TAB_TO_SELF_SIGN_IN_PROMO_BODY" desc="Body label text of the send-tab-to-self sign-in promo bubble.">
         To send links between devices, ensure both are signed in to the same Google account.
@@ -17348,19 +17348,19 @@ Please help our engineers fix this problem. Tell us what happened right before y
 
     <!-- Automation infobar -->
     <message name="IDS_CONTROLLED_BY_AUTOMATION" desc="Message shown when the browser session is being controlled by an automated test.">
-      Chrome is being controlled by automated test software
+      w8-core is being controlled by automated test software
     </message>
 
     <!-- Chrome for Testing infobar main text -->
     <message name="IDS_CHROME_FOR_TESTING_DISCLAIMER" desc="An infobar prompt shown whenever Chrome for Testing is launched. In Title Case: 'Chrome for Testing'.">
-      Chrome for Testing v<ph name="BROWSER_VERSION">
+      w8-core for Testing v<ph name="BROWSER_VERSION">
         $1<ex>109.0.5369.0</ex>
-      </ph> is only for automated testing. For regular browsing, use a standard version of Chrome that updates automatically.
+      </ph> is only for automated testing. For regular browsing, use a standard version of w8-core that updates automatically.
     </message>
 
     <!-- Chrome for Testing infobar download chrome hyperlink text -->
     <message name="IDS_DOWNLOAD_CHROME" desc="Hyperlink call-out to download Chrome">
-      Download Chrome
+      Download w8-core
     </message>
 
     <!-- Security Key permission -->
@@ -17634,7 +17634,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
       </message>
       <if expr="is_macosx">
         <message name="IDS_WEBAUTHN_YOUR_CHROME_PROFILE" desc="Menu item text. The user selects this to use a hardware-based authentication mechanism that is built in to the computer, such as a fingerprint reader. The credential itself is stored in the Chrome profile, however, and this text emphasizes that.">
-          Your Chrome profile
+          Your w8-core profile
         </message>
       </if>
       <message name="IDS_WEBAUTHN_TRANSPORT_INTERNAL" desc="Menu item text. The user selects this to use a hardware-based authentication mechanism that is built in to the computer, such as a fingerprint reader.">
@@ -17724,7 +17724,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
 
       <if expr="is_macosx">
         <message name="IDS_WEBAUTHN_BLUETOOTH_PERMISSION" desc="Body text in a dialog that appears when the user has requested some function that depends on Bluetooth, but Chrome doesn't have permission to use Bluetooth. The action on this dialog is a button that will open the macOS System Settings so that the user can grant permission.">
-          Chrome needs permission to use Bluetooth to connect to your device
+          w8-core needs permission to use Bluetooth to connect to your device
         </message>
       </if>
 
@@ -17900,7 +17900,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
         On other devices
       </message>
       <message name="IDS_WEBAUTHN_SOURCE_CHROME_PROFILE" desc="The subtitle shown in a button that lets the user select a passkey to sign in, indicating that the passkey resides in the user's Chrome Profile.">
-        Your Chrome profile
+        Your w8-core profile
       </message>
       <message name="IDS_WEBAUTHN_SOURCE_ICLOUD_KEYCHAIN" desc="The subtitle shown in a button that lets the user select a passkey to sign in, indicating that the passkey resides in the user's iCloud Keychain.">
         iCloud Keychain
@@ -18348,24 +18348,24 @@ Please help our engineers fix this problem. Tell us what happened right before y
     </message>
 
     <message name="IDS_TAILORED_SECURITY_ENABLED_DIALOG_MAIN_TEXT" desc="Title shown in the tab dialog when the account tailored security setting changes for a consented primary account">
-      You have Chrome's strongest security against dangerous websites, downloads and extensions
+      You have w8-core's strongest security against dangerous websites, downloads and extensions
     </message>
     <message name="IDS_TAILORED_SECURITY_DISABLED_DIALOG_MAIN_TEXT" desc="Title shown in the tab dialog when the account tailored security setting changes for a consented primary account">
-      You're getting standard security protection. To get more protection against dangerous websites, downloads, and extensions, turn on Enhanced Safe Browsing in Chrome settings.
+      You're getting standard security protection. To get more protection against dangerous websites, downloads, and extensions, turn on Enhanced Safe Browsing in w8-core settings.
     </message>
     <message name="IDS_TAILORED_SECURITY_DISABLED_DIALOG_ACCEPT_BUTTON" desc="The text on the accept button in the tab modal dialog when the account tailored security setting is disabled for a consented primary account">
       Got it
     </message>
     <message name="IDS_TAILORED_SECURITY_DIALOG_SETTINGS_BUTTON" desc="The text on the cancel button in the tab dialog when the account tailored security setting changes for a consented primary account">
-      Chrome settings
+      w8-core settings
     </message>
 
     <!-- Tailored security dialog for unconsented primary accounts -->
     <message name="IDS_TAILORED_SECURITY_UNCONSENTED_MODAL_TITLE" desc="Title shown in the tab modal dialog when the account tailored security setting changes for an unconsented primary account">
-      Also turn on Enhanced Safe Browsing for this Chrome profile?
+      Also turn on Enhanced Safe Browsing for this w8-core profile?
     </message>
     <message name="IDS_TAILORED_SECURITY_UNCONSENTED_MODAL_BODY" desc="Body shown in the tab modal dialog when the account tailored security setting changes for an unconsented primary account">
-      Chrome&#x2019;s strongest security does more to protect you against dangerous websites, downloads, and extensions
+      w8-core&#x2019;s strongest security does more to protect you against dangerous websites, downloads, and extensions
     </message>
     <message name="IDS_TAILORED_SECURITY_UNCONSENTED_ACCEPT_BUTTON" desc="The text on the accept button in the tab modal dialog when the account tailored security setting changes for an unconsented primary account">
       Turn on
@@ -18379,7 +18379,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
       Enhanced Safe Browsing is on
     </message>
     <message name="IDS_TAILORED_SECURITY_CONSENTED_ENABLE_MESSAGE_DESCRIPTION" desc="Description shown in the Android message when the account tailored security setting changes for a consented primary account">
-      You have Chrome&#x2019;s strongest security against harmful websites
+      You have w8-core&#x2019;s strongest security against harmful websites
     </message>
     <message name="IDS_TAILORED_SECURITY_CONSENTED_DISABLE_MESSAGE_TITLE" desc="Title shown in the Android message when the account tailored security setting changes for a consented primary account">
       Enhanced Safe Browsing is off
@@ -19005,10 +19005,10 @@ Please help our engineers fix this problem. Tell us what happened right before y
         From your recent search
       </message>
       <message name="IDS_MULTISTEP_FILTER_IPH_BODY" desc="Text shown in the IPH bubble for educating users about Multistep Filter." translateable="false">
-        Chrome can now suggest your recent filters and search details, helping you pick up where you left off or compare options across sites
+        w8-core can now suggest your recent filters and search details, helping you pick up where you left off or compare options across sites
       </message>
       <message name="IDS_MULTISTEP_FILTER_IPH_BODY_SCREENREADER" is_accessibility_with_no_ui="true" desc="Screenreader text shown in the IPH bubble for educating users about Multistep Filter." translateable="false">
-        Chrome can now suggest your recent filters and search details, helping you pick up where you left off or compare options across sites
+        w8-core can now suggest your recent filters and search details, helping you pick up where you left off or compare options across sites
       </message>
       <message name="IDS_LINK_COPIED_TOAST_BODY" desc="Text on a toast notification that is shown when a link is successfully copied.">
         Link copied
@@ -19041,7 +19041,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
         Close
       </message>
       <message name="IDS_NON_MILESTONE_UPDATE_TOAST_BODY" desc="Text on a toast notification that is shown when a non milestone update is complete.">
-        Chrome was updated
+        w8-core was updated
       </message>
       <message name="IDS_GLIC_SHARE_IMAGE_FAILED_TOAST_BODY" desc="Text on a toast notification that is shown when sharing an image with Gemini fails (when using the 'Create image with Gemini' context menu item)">
         Could not share image with Gemini. Try again or try another image.
@@ -19243,7 +19243,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
       Launch application
     </message>
     <message name="IDS_IWA_INSTALLER_VERIFICATION_TITLE" desc="Title of the verification step of the IWA installation">
-      Chrome is verifying the installation bundle
+      w8-core is verifying the installation bundle
     </message>
     <message name="IDS_IWA_INSTALLER_VERIFICATION_SUBTITLE" desc="Subtitle of the verification step of the IWA installation">
       Please wait while verification is in progress
@@ -19255,7 +19255,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
         other {Checking public key and integrity block... # minutes remaining}}
     </message>
     <message name="IDS_IWA_INSTALLER_VERIFICATION_ERROR_TITLE" desc="Title of an error popup during the verification step of the Isolated Web App installer">
-      Chrome failed to verify this installation bundle
+      w8-core failed to verify this installation bundle
     </message>
     <message name="IDS_IWA_INSTALLER_VERIFICATION_ERROR_SUBTITLE" desc="Subtitle of an error popup during the verification step of the Isolated Web App installer">
       This bundle might be broken or compromised. Please close this window and download it again
@@ -19334,8 +19334,8 @@ Please help our engineers fix this problem. Tell us what happened right before y
         </message>
         <message name="IDS_SETTINGS_SAFETY_HUB_REVOKED_PERMISSIONS_MENU_NOTIFICATION" desc="Title for the permissions review Safety Check module on the Magic Stack. Shown when Safety Check has identified several sites that send abusive notifications.">
           {NUM_SITES, plural,
-          =1 {Chrome removed permissions from 1 site}
-          other {Chrome removed permissions from {NUM_SITES} sites}}
+          =1 {w8-core removed permissions from 1 site}
+          other {w8-core removed permissions from {NUM_SITES} sites}}
         </message>
         <message name="IDS_SETTINGS_SAFETY_HUB_COMPROMISED_PASSWORDS_MENU_NOTIFICATION" desc="Summary for the compromised passwords Safety Check module on the Magic Stack. Shown when Safety Check has identified insecure credentials.">
           {NUM_SITES, plural,
@@ -19354,7 +19354,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
 
     <!-- PDF Searchify elements. -->
     <message name="IDS_PDF_SEARCHIFY_IPH_TITLE" desc="Title of in product help to introduce PDF Searchify feature.">
-    Chrome makes PDFs better
+    w8-core makes PDFs better
     </message>
     <message name="IDS_PDF_SEARCHIFY_IPH_BODY" desc="Content of in product help to introduce PDF Searchify feature.">
     PDFs automatically get converted so you can search and select text
@@ -19443,7 +19443,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
     Always allow
   </message>
   <message name="IDS_CHROME_NO_LONGER_SHOW_WARNINGS_NOTIFICATION_BODY" desc="The body for the notification sent by Chrome informing the user that their decision to never show warnings for the url has been applied.">
-    Chrome will stop flagging notifications from this site as spam
+    w8-core will stop flagging notifications from this site as spam
   </message>
   <message name="IDS_CHROME_NO_LONGER_SHOW_WARNINGS_NOTIFICATION_TITLE_NEW" desc="The title for the notification sent by Chrome informing the user that their decision to never show warnings for the url has been applied.">
     Notifications allowed from <ph name="DOMAIN">$1<ex>example.com</ex></ph>
@@ -19545,7 +19545,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
       Find your <ph name="FILENAME">$1<ex>document.pdf</ex></ph> in the <ph name="FEATURE_NAME">$2<ex>Saved from Chrome</ex></ph> folder
     </message>
     <message name="IDS_SAVE_TO_DRIVE_FOLDER_NAME" desc="Name of the folder in Drive where files saved from Chrome are stored." meaning="Name of the folder in Drive where files saved from Chrome are stored. Please use the short version of the branded term for Google Chrome i.e. Chrome">
-      Saved from Chrome
+      Saved from w8-core
     </message>
     <message name="IDS_ACCOUNT_CHOOSER_DRIVE" desc="Google Drive product name.">
       Drive
@@ -19562,10 +19562,10 @@ Please help our engineers fix this problem. Tell us what happened right before y
 
     <!-- Tips Notifications-->
     <message name="IDS_TIPS_NOTIFICATIONS_HELPFUL_BUTTON_TEXT" desc="Text for the helpful button found on tips notifications.">
-      Open Chrome
+      Open w8-core
     </message>
     <message name="IDS_TIPS_NOTIFICATIONS_ENHANCED_SAFE_BROWSING_TITLE" desc="Title for the enhanced safe browsing tip notification. [CHAR_LIMIT=32]">
-      Get Chrome's strongest security
+      Get w8-core's strongest security
     </message>
     <message name="IDS_TIPS_NOTIFICATIONS_ENHANCED_SAFE_BROWSING_SUBTITLE" desc="Subtitle for the enhanced safe browsing tip notification.">
       Add an extra layer of security against online threats with enhanced protection
@@ -19595,7 +19595,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
       Create, save, and manage your passwords so you can easily sign in
     </message>
     <message name="IDS_TIPS_NOTIFICATIONS_SIGNIN_TITLE" desc="Title for the sign-in tip notification. [CHAR_LIMIT=32]">
-      Make Chrome your own
+      Make w8-core your own
     </message>
     <message name="IDS_TIPS_NOTIFICATIONS_SIGNIN_SUBTITLE" desc="Subtitle for the sign-in tip notification.">
       Sign in to easily continue on all your devices
@@ -19616,7 +19616,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
       Pick up where you left off
     </message>
     <message name="IDS_TIPS_NOTIFICATIONS_RECENT_TABS_SUBTITLE" desc="Subtitle for the recent tabs tip notification.">
-      You can reopen tabs that you've recently closed from wherever you use Chrome
+      You can reopen tabs that you've recently closed from wherever you use w8-core
     </message>
 
     <!-- chrome://updater -->
@@ -19784,7 +19784,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
         Updater Scope: <ph name="OUTCOMES">$1<ex>Per-system updater, Per-user updater</ex></ph>
       </message>
       <message name="IDS_UPDATER_HELP_CENTER_TOOLTIP" desc="Tooltip for the help center link about maintaining Chrome updates.">
-        Learn more about maintaining Chrome updates
+        Learn more about maintaining w8-core updates
       </message>
       <message name="IDS_UPDATER_INACTIVE_VERSIONS_LABEL" desc="A label for a list of inactive versions of the Chrome Updater. Multiple Chrome Updater versions may be present on a users machine but only one may be active at a time.">
         Inactive Versions:
@@ -19952,7 +19952,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
         Update Error
       </message>
       <message name="IDS_UPDATER_VIEW_ALL_CHROME_POLICIES" desc="Label for a button that opens the chrome://policy page.">
-        View all Chrome Policies
+        View all w8-core Policies
       </message>
       <message name="IDS_UPDATER_VIEW_RAW_DETAILS" desc="Title of the button to display the contents of a Chrome Updater log in JSON format">
         Source
@@ -19981,7 +19981,7 @@ Please help our engineers fix this problem. Tell us what happened right before y
 
     <!-- Chrome finds Notifications -->
     <message name="IDS_CHROME_FINDS_NOTIFICATIONS_HELPFUL_BUTTON_TEXT" desc="Text for the helpful button found on Chrome finds notifications.">
-      Open in Chrome
+      Open in w8-core
     </message>
     <message name="IDS_CHROME_FINDS_NOTIFICATIONS_UNHELPFUL_BUTTON_TEXT" desc="Text for the unhelpful button found on Chrome finds notifications.">
       Not interested

@@ -16,3 +16,6 @@ compose.yaml
 *.log
 *.tar
 *.tar.gz
+
+.env
+.env.*

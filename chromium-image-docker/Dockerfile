@@ -98,8 +98,8 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 ARG IMAGE_VERSION=dev
 ARG VCS_REF=unknown
 
-LABEL org.opencontainers.image.title="w8-core Chromium desktop" \
-      org.opencontainers.image.description="Wootz desktop browser with ChromiumRL CDP and agent-browser" \
+LABEL org.opencontainers.image.title="w8-core" \
+      org.opencontainers.image.description="Wootzapp desktop browser with ChromiumRL CDP and agent-browser" \
       org.opencontainers.image.source="https://github.com/wootzapp/wootzapp-browser" \
       org.opencontainers.image.version="${IMAGE_VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"

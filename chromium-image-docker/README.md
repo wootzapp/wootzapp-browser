@@ -1,43 +1,97 @@
-# w8-core Runtime
+# w8-core Docker reference
 
-This directory builds and runs the Docker runtime for w8-core, ChromiumRL CDP,
-and the pinned agent-browser command-line runtime.
+Use the [root README](../README.md#quick-start) for the `.env` setup and basic browsing, capture, and replay commands. This reference covers additional settings, diagnostics, and local image builds.
 
-The runtime starts w8-core, exposes Chrome DevTools Protocol, optionally starts a headed VNC/noVNC display stack, and provides health commands for automation.
+Unless stated otherwise, run commands from `chromium-image-docker/`, where `compose.yaml` and your `.env` file are stored.
 
-## What the runtime does
+## Environment configuration
 
-The container entrypoint is:
+Compose reads `.env` automatically. Shell variables override values in the file. After editing `.env`, apply the settings with `docker compose up -d --no-build --wait`; `docker compose restart` does not apply environment changes.
 
-```text
-chromium-runtime-entrypoint
+Check that the configuration is valid:
+
+```bash
+docker compose config --quiet
 ```
 
-By default it runs:
+The Compose defaults below apply when a setting is absent. `.env.example` selects the published image, desktop mode, profile retention, and `AUTHORING_SESSION=my-session`.
 
-```text
-chromium-runtime-entrypoint serve
+| Setting | Default | Purpose |
+|---|---|---|
+| `CHROMIUM_IMAGE_NAME` | `w8-core:chromium-desktop` | Published image or a local image tag. |
+| `CHROMIUM_CONTAINER_NAME` | `w8-core-browser-engine` | Container name. |
+| `CHROMIUM_SHM_SIZE` | `2g` | Shared memory available to the browser. |
+| `CHROMIUM_PROFILE_VOLUME` | `w8-core-profile` | Named volume containing the browser profile. |
+| `CDP_PORT` | `9222` | Host port for CDP. |
+| `VNC_PORT` | `5900` | Host port for VNC clients. |
+| `NOVNC_PORT` | `6080` | Host port for the web desktop. |
+| `CHROMIUM_HEADLESS` | `1` | Set to `0` to enable the desktop. |
+| `CHROMIUM_RESET_PROFILE` | `1` | Set to `0` to retain the profile at startup. |
+| `AUTHORING_MODE` | `off` | `off`, `capture`, or `replay`. |
+| `AUTHORING_SESSION` | `default` | Name of the capture/replay session. |
+| `VNC_SCREEN` | `1366x900x24` | Desktop width, height, and color depth. |
+| `CHROMIUM_START_URL` | `about:blank` | Page to open at startup. |
+| `CHROMIUM_EXTRA_ARGS` | Empty | Additional browser flags. |
+
+For example, add a browser flag in `.env`:
+
+```env
+CHROMIUM_EXTRA_ARGS=--disable-features=SomeFeature
 ```
 
-The serve command:
+The profile is mounted at `/home/wootz/wootz-browser-sessions`. Keep profile resets disabled to retain browsing data and recordings. `docker compose down` keeps the volume; `docker compose down -v` removes it.
 
-- prepares the browser profile directory
-- starts Xvfb, VNC, and noVNC when headed mode is enabled
-- starts w8-core
-- starts a public CDP bridge
-- provides Node.js and the pinned official `agent-browser` CLI
-- waits until CDP is ready
-- keeps the w8-core process alive
+## Connections
 
-## Build payload
+Compose binds the host ports to `127.0.0.1`. Use the port values from `.env` when connecting. For remote Docker hosts, forward the required ports through SSH or your editor.
 
-The w8-core payload must be present in:
+Inside the container, the browser listens on private CDP port `9223`, behind the public bridge on `9222`. Clients should use the public endpoint. Direct Docker launches can override the private port with `--env CHROMIUM_CDP_PORT=<port>`; the Compose file does not forward that setting.
 
-```text
-chromium-image-docker/build/
+## Status and logs
+
+The image includes a health check used by Compose's `--wait` option. The entrypoint, `chromium-runtime-entrypoint`, also provides these diagnostic commands:
+
+```bash
+docker compose exec w8-core chromium-runtime-entrypoint status
+docker compose exec w8-core chromium-runtime-entrypoint wait --timeout 30
+docker compose exec w8-core chromium-runtime-entrypoint version
 ```
 
-The directory must contain the Chromium executable and its runtime files, for example:
+Launch settings and browser logs are stored inside the container:
+
+```text
+/tmp/chromium-runtime/browser-launch.env
+/tmp/chromium-runtime/chrome.log
+```
+
+Read the browser log:
+
+```bash
+docker compose exec w8-core cat /tmp/chromium-runtime/chrome.log
+```
+
+Check the bundled Node.js version:
+
+```bash
+docker compose exec w8-core node --version
+```
+
+See the [agent-browser guide](../agent-browser/README.md) for observation and action commands.
+
+## Existing containers
+
+If `w8-core-browser-engine` already exists from a direct `docker run` launch, stop and remove it before starting the Compose workflow:
+
+```bash
+docker stop w8-core-browser-engine
+docker rm w8-core-browser-engine
+```
+
+Its `w8-core-profile` named volume can be reused by this configuration. If another Compose project manages the container, stop that project through its own configuration first. To run a separate browser instance, choose a different container name, profile volume, and host ports in `.env`.
+
+## Local image build
+
+A local image build packages an already compiled browser. From the repository root, place the executable and all required runtime files under `chromium-image-docker/build/`:
 
 ```text
 build/
@@ -49,275 +103,39 @@ build/
   ...
 ```
 
-The build script checks that `build/chrome` exists and is executable before building the image.
-It also supplies `../agent-browser` as a named BuildKit context. That context is
-restricted by `agent-browser/.dockerignore`, so local environment files and
-dependencies cannot enter the image build context.
+The executable `build/chrome` must have execute permission. The build script checks the executable and includes the pinned `../agent-browser` package through a named BuildKit context. `agent-browser/.dockerignore` excludes local environment files and dependencies.
 
-## Build the image
-
-From this directory:
+Build the local image:
 
 ```bash
 cd chromium-image-docker
-./scripts/build_image.sh
+CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop \
+  ./scripts/build_image.sh
 ```
 
-The default image name is:
-
-```text
-w8-core:chromium-desktop
-```
-
-Override it with:
+Set `CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop` in this directory's `.env`, then start the image:
 
 ```bash
-CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop ./scripts/build_image.sh
+docker compose up -d --no-build --wait
 ```
 
-You can also build directly with Buildx:
+For a custom image tag, use the same tag when building and in `.env`. Browser source changes require rebuilding the browser payload before packaging the image.
+
+To build directly with Buildx, run from `chromium-image-docker/`:
 
 ```bash
 docker buildx build --load \
   --build-context agent_browser=../agent-browser \
-  -t w8-core:chromium-desktop .
+  -t "${CHROMIUM_IMAGE_NAME:-w8-core:chromium-desktop}" .
 ```
 
-## Run with Docker Compose
+### Helper scripts
 
-Start w8-core:
+Run the direct Docker helpers from `chromium-image-docker/`:
 
-```bash
-cd chromium-image-docker
-docker compose up -d
-```
+| Action | Command |
+|---|---|
+| Start | `./scripts/run_local.sh` |
+| Stop and remove | `./scripts/stop_local.sh` |
 
-Check status:
-
-```bash
-docker compose exec w8-core chromium-runtime-entrypoint status
-```
-
-Wait until ready:
-
-```bash
-docker compose exec w8-core chromium-runtime-entrypoint wait --timeout 30
-```
-
-Stop the container:
-
-```bash
-docker compose down
-```
-
-## Run with helper scripts
-
-The helper scripts use the same runtime settings as the Docker image.
-
-Build:
-
-```bash
-./scripts/build_image.sh
-```
-
-Run:
-
-```bash
-./scripts/run_local.sh
-```
-
-Stop:
-
-```bash
-./scripts/stop_local.sh
-```
-
-## CDP ports
-
-w8-core itself starts CDP privately on:
-
-```text
-127.0.0.1:9223
-```
-
-The runtime exposes a public CDP bridge on:
-
-```text
-0.0.0.0:9222
-```
-
-From the host, use:
-
-```text
-http://127.0.0.1:9222/json/version
-```
-
-The public CDP port is controlled by:
-
-```env
-CDP_PORT=9222
-```
-
-The private w8-core CDP port is controlled by:
-
-```env
-CHROMIUM_CDP_PORT=9223
-```
-
-Most tools should use the public port, `9222`.
-
-## Headless and headed modes
-
-Headless mode is the default:
-
-```env
-CHROMIUM_HEADLESS=1
-```
-
-Headed mode starts Xvfb, VNC, and noVNC:
-
-```bash
-CHROMIUM_HEADLESS=0 docker compose up -d
-```
-
-The default ports are:
-
-```text
-CDP:   9222
-VNC:   5900
-noVNC: 6080
-```
-
-Open noVNC in a browser:
-
-```text
-http://127.0.0.1:6080/vnc.html?host=127.0.0.1&port=6080&autoconnect=1&resize=scale
-```
-
-The display size is controlled by `VNC_SCREEN`, for example:
-
-```env
-VNC_SCREEN=1366x900x24
-```
-
-## Runtime commands
-
-Run these inside the container:
-
-```bash
-chromium-runtime-entrypoint serve
-chromium-runtime-entrypoint status
-chromium-runtime-entrypoint wait --timeout 30
-chromium-runtime-entrypoint version
-```
-
-`status` checks the public CDP endpoint and prints runtime information.
-
-`wait` polls the public CDP endpoint until it is ready or the timeout expires.
-
-`version` prints the w8-core version from the Chromium executable.
-
-## Common configuration
-
-The Compose file supports these runtime values:
-
-```env
-CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop
-CHROMIUM_CONTAINER_NAME=w8-core-browser-engine
-CHROMIUM_SHM_SIZE=2g
-CDP_PORT=9222
-VNC_PORT=5900
-NOVNC_PORT=6080
-CHROMIUM_HEADLESS=1
-CHROMIUM_RESET_PROFILE=1
-AUTHORING_MODE=off
-AUTHORING_SESSION=default
-VNC_SCREEN=1366x900x24
-CHROMIUM_START_URL=about:blank
-CHROMIUM_EXTRA_ARGS=
-```
-
-Examples:
-
-```bash
-CHROMIUM_START_URL=https://example.com docker compose up -d
-CHROMIUM_EXTRA_ARGS="--disable-features=SomeFeature" docker compose up -d
-```
-
-## Browser profile
-
-The runtime stores browser profile data under:
-
-```text
-/home/wootz/wootz-browser-sessions
-```
-
-By default the profile is reset on each container start:
-
-```env
-CHROMIUM_RESET_PROFILE=1
-```
-
-Set it to `0` when a persistent profile is needed:
-
-```bash
-CHROMIUM_RESET_PROFILE=0 docker compose up -d
-```
-
-## Logs
-
-Runtime metadata is written inside the container under `/tmp/chromium-runtime/`.
-
-Important files include:
-
-```text
-/tmp/chromium-runtime/browser-launch.env
-/tmp/chromium-runtime/chrome.log
-```
-
-## Authoring mode
-
-Authoring is disabled by default:
-
-```env
-AUTHORING_MODE=off
-```
-
-Capture and replay are enabled with:
-
-```env
-AUTHORING_MODE=capture
-AUTHORING_MODE=replay
-AUTHORING_SESSION=<session>
-```
-
-See the browser workflow README for details:
-
-```text
-../chromium-desktop/README.md
-```
-
-## Agent-browser
-
-The image includes the official agent-browser CLI pinned by
-`../agent-browser/package-lock.json` and a compatible Node.js runtime.
-It contains no model SDK, credentials, prompt, or agent loop. Each harness owns
-those choices and uses agent-browser only for browser observation and actions.
-
-Check the installed command:
-
-```bash
-docker compose exec w8-core node --version
-docker compose exec w8-core agent-browser --version
-```
-
-Attach the CLI to the browser's internal CDP endpoint and take an interactive
-snapshot:
-
-```bash
-docker compose exec \
-  w8-core \
-  agent-browser --cdp http://127.0.0.1:9222 snapshot --interactive --json
-```
-
-See `../agent-browser/README.md` for the harness integration boundary.
+The start helper does not mount a profile volume. Use the Compose workflow when data must survive container replacement.

@@ -20,9 +20,14 @@ services:
       VNC_SCREEN: ${VNC_SCREEN:-1366x900x24}
       CHROMIUM_START_URL: ${CHROMIUM_START_URL:-about:blank}
       CHROMIUM_EXTRA_ARGS: ${CHROMIUM_EXTRA_ARGS:-}
+    volumes:
+      - browser-profile:/home/wootz/wootz-browser-sessions
     healthcheck:
       test: ["CMD", "chromium-runtime-entrypoint", "status", "--quiet"]
       interval: 15s
       timeout: 5s
       retries: 4
       start_period: 20s
+volumes:
+  browser-profile:
+    name: ${CHROMIUM_PROFILE_VOLUME:-w8-core-profile}
