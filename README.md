@@ -1,6 +1,6 @@
 # w8-core
 
-<img src="chromium-desktop/src/chrome/app/theme/chromium/wootzapp-icon.png" alt="Wootzapp logo" width="80" />
+<img src="chromium-desktop/src/chrome/app/theme/chromium/wootzapp-icon.png" alt="Wootzapp logo" width="120" />
 
 w8-core is Wootzapp's desktop browser for interactive browsing, browser automation, and session capture with offline replay. The Docker image includes the browser, a web-accessible desktop through noVNC, and the `agent-browser` CLI.
 
