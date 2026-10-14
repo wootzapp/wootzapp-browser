@@ -1824,9 +1824,6 @@ protocol::Response InspectorChromiumRLAgent::compareDOMState(
     auto layout_changes = std::make_unique<protocol::Array<protocol::ChromiumRL::DiffOperation>>();
     auto style_changes = std::make_unique<protocol::Array<protocol::ChromiumRL::DiffOperation>>();
     auto type_changes = std::make_unique<protocol::Array<protocol::ChromiumRL::DiffOperation>>();
-    double total_text_sim = 0.0;
-    double total_layout_sim = 0.0;
-    double total_style_sim = 0.0;
   
     for (const auto& pair : matches) {
         // Validate indices
@@ -1839,15 +1836,6 @@ protocol::Response InspectorChromiumRLAgent::compareDOMState(
         if (!ref || !live) continue;
         
         int live_id = live->getNodeId();
-        
-        // Check bounds before using
-        auto* ref_bounds = ref->getBounds(empty_rect.get());
-        auto* live_bounds = live->getBounds(empty_rect.get());
-        if (ref_bounds && live_bounds) {
-            total_text_sim += ComputeTextSimilarity(ref->getTextContent(), live->getTextContent());
-            total_layout_sim += CalculateIoU(ref_bounds, live_bounds);
-        }
-        total_style_sim += ComputeStyleSimilarity(ref, live, ref_nodes, live_nodes);
 
               // Skip #text nodes if they are children of content-holding elements (STYLE, TITLE, etc.)
               if (live->getTagName() == "#text") {
