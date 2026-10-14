@@ -3990,7 +3990,7 @@ protocol::Response InspectorChromiumRLAgent::getAgentObservation(
   auto content_blocks = std::make_unique<protocol::Array<protocol::ChromiumRL::ContentBlock>>();
 
   struct InteractiveCandidate {
-    Element* element;
+    Persistent<Element> element;
     gfx::RectF css_box;
     bool is_in_viewport;
     bool is_hit_testable;
@@ -4000,7 +4000,7 @@ protocol::Response InspectorChromiumRLAgent::getAgentObservation(
   };
 
   struct ContentCandidate {
-    Element* element;
+    Persistent<Element> element;
     double score;
     int dom_order;
     String dedup_key;
@@ -4161,7 +4161,7 @@ protocol::Response InspectorChromiumRLAgent::getAgentObservation(
   int idx = 0;
   for (const auto& candidate : interactive_candidates) {
     if (idx >= interactive_limit) break;
-    auto obs_el = BuildObservedElement(candidate.element, idx, candidate.css_box,
+    auto obs_el = BuildObservedElement(candidate.element.Get(), idx, candidate.css_box,
                                       candidate.is_in_viewport,
                                       candidate.is_hit_testable);
     if (obs_el->hasContext()) {
@@ -4179,7 +4179,7 @@ protocol::Response InspectorChromiumRLAgent::getAgentObservation(
   int content_count = 0;
   for (const auto& candidate : content_candidates) {
     if (content_count >= content_limit) break;
-    auto block = BuildContentBlock(candidate.element, candidate.text);
+    auto block = BuildContentBlock(candidate.element.Get(), candidate.text);
     if (block) {
       content_blocks->push_back(std::move(block));
       content_count++;
