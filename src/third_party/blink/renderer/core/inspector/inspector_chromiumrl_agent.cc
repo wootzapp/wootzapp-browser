@@ -1824,9 +1824,6 @@ protocol::Response InspectorChromiumRLAgent::compareDOMState(
     auto layout_changes = std::make_unique<protocol::Array<protocol::ChromiumRL::DiffOperation>>();
     auto style_changes = std::make_unique<protocol::Array<protocol::ChromiumRL::DiffOperation>>();
     auto type_changes = std::make_unique<protocol::Array<protocol::ChromiumRL::DiffOperation>>();
-    double total_text_sim = 0.0;
-    double total_layout_sim = 0.0;
-    double total_style_sim = 0.0;
   
     for (const auto& pair : matches) {
         // Validate indices
@@ -1839,15 +1836,6 @@ protocol::Response InspectorChromiumRLAgent::compareDOMState(
         if (!ref || !live) continue;
         
         int live_id = live->getNodeId();
-        
-        // Check bounds before using
-        auto* ref_bounds = ref->getBounds(empty_rect.get());
-        auto* live_bounds = live->getBounds(empty_rect.get());
-        if (ref_bounds && live_bounds) {
-            total_text_sim += ComputeTextSimilarity(ref->getTextContent(), live->getTextContent());
-            total_layout_sim += CalculateIoU(ref_bounds, live_bounds);
-        }
-        total_style_sim += ComputeStyleSimilarity(ref, live, ref_nodes, live_nodes);
 
               // Skip #text nodes if they are children of content-holding elements (STYLE, TITLE, etc.)
               if (live->getTagName() == "#text") {
@@ -4002,7 +3990,7 @@ protocol::Response InspectorChromiumRLAgent::getAgentObservation(
   auto content_blocks = std::make_unique<protocol::Array<protocol::ChromiumRL::ContentBlock>>();
 
   struct InteractiveCandidate {
-    Element* element;
+    Persistent<Element> element;
     gfx::RectF css_box;
     bool is_in_viewport;
     bool is_hit_testable;
@@ -4012,7 +4000,7 @@ protocol::Response InspectorChromiumRLAgent::getAgentObservation(
   };
 
   struct ContentCandidate {
-    Element* element;
+    Persistent<Element> element;
     double score;
     int dom_order;
     String dedup_key;
@@ -4173,7 +4161,7 @@ protocol::Response InspectorChromiumRLAgent::getAgentObservation(
   int idx = 0;
   for (const auto& candidate : interactive_candidates) {
     if (idx >= interactive_limit) break;
-    auto obs_el = BuildObservedElement(candidate.element, idx, candidate.css_box,
+    auto obs_el = BuildObservedElement(candidate.element.Get(), idx, candidate.css_box,
                                       candidate.is_in_viewport,
                                       candidate.is_hit_testable);
     if (obs_el->hasContext()) {
@@ -4191,7 +4179,7 @@ protocol::Response InspectorChromiumRLAgent::getAgentObservation(
   int content_count = 0;
   for (const auto& candidate : content_candidates) {
     if (content_count >= content_limit) break;
-    auto block = BuildContentBlock(candidate.element, candidate.text);
+    auto block = BuildContentBlock(candidate.element.Get(), candidate.text);
     if (block) {
       content_blocks->push_back(std::move(block));
       content_count++;

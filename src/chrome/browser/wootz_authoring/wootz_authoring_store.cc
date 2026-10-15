@@ -618,18 +618,6 @@ std::string FirstComparableFieldValue(
   return std::string();
 }
 
-bool NonEmptyAnyFieldEquals(const base::DictValue& wanted,
-                            const base::DictValue& candidate,
-                            std::initializer_list<std::string_view> keys) {
-  const std::string wanted_value = FirstComparableFieldValue(wanted, keys);
-  if (wanted_value.empty()) {
-    return true;
-  }
-  const std::string candidate_value =
-      FirstComparableFieldValue(candidate, keys);
-  return !candidate_value.empty() && candidate_value == wanted_value;
-}
-
 bool RequiredAnyFieldEquals(const base::DictValue& wanted,
                             const base::DictValue& candidate,
                             std::initializer_list<std::string_view> keys) {
