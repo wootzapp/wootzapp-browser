@@ -1,3 +1,0 @@
-This page contains the following errors:
-error on line 10 at column 1: Unexpected end of stream: still inside the root element
-Below is a rendering of the page up to the first error.

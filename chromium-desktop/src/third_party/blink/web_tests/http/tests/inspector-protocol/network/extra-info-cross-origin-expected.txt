@@ -1,5 +1,0 @@
-Verifies that cached cross-origin responses contain correct headers
-
-response code=200
-response code=304
-

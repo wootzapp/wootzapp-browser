@@ -1,2 +1,0 @@
-# Prevent "CRLF will be replaced by LF the next time Git touches it" warnings.
-vendor/** -text

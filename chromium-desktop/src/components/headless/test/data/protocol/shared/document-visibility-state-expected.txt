@@ -1,2 +1,0 @@
-Tests document.visibilityState upon start.
-document.visibilityState: visible

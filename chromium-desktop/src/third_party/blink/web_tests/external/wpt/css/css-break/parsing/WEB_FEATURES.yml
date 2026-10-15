@@ -1,7 +1,0 @@
-features:
-- name: box-decoration-break
-  files:
-  - box-decoration-break-*
-- name: column-breaks
-  files:
-  - break-*

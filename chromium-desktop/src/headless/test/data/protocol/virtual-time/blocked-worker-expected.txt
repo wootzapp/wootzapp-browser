@@ -1,2 +1,0 @@
-Tests that worker start aborted due to CDP does not block virtual time
-requested url: http://www.example.com/

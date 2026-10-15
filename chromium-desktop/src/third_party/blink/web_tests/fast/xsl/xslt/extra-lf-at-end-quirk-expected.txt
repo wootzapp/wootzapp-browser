@@ -1,2 +1,0 @@
-CONSOLE ERROR: Uncaught ReferenceError: XSLTProcessor is not defined
-Test for bug 15919: XSLTProcessor.transformToFragment creates an extra not defined TEXT_NODE at the end.

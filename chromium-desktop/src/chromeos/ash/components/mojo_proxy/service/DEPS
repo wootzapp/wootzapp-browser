@@ -1,4 +1,0 @@
-include_rules = [
-  "+mojo/core",
-  "+third_party/ipcz/include",
-]

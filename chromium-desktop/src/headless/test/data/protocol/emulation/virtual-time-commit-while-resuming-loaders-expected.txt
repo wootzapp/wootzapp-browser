@@ -1,2 +1,0 @@
-Tests that navigations committing while paused document loaders are being resumed are handled correctly.
-Loaded child frames: 9

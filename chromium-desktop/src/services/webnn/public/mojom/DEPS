@@ -1,3 +1,0 @@
-include_rules = [
-  "+third_party/blink/renderer/modules/ml/webnn/operand_id_hash_traits.h"
-]

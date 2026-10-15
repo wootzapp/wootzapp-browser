@@ -1,7 +1,0 @@
-include_rules = [
-  "+components/keyed_service",
-  "+components/signin",
-  "+google_apis",
-  "+net",
-  "+services/network",
-]

@@ -1,8 +1,0 @@
-features:
-- name: non-cookie-storage-access
-  files:
-  - storage-access-beyond-cookies.*
-- name: storage-access
-  files:
-  - "*"
-  - "!storage-access-beyond-cookies.*"

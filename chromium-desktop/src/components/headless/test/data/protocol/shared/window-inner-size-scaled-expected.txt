@@ -1,5 +1,0 @@
-Tests Browser.setContentsSize() updating inner width and height.
-Inner window size: {
-    innerHeight : 500
-    innerWidth : 700
-}

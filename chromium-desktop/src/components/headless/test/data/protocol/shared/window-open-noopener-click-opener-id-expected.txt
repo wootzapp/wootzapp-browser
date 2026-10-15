@@ -1,2 +1,0 @@
-Tests that opener is NOT specified on a page opened via Click with rel=noopener.
-PASS

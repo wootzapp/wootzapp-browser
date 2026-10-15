@@ -1,4 +1,0 @@
-include_rules = [
-  "+third_party/fuzztest",
-  "+ui/base/resource/resource_bundle.h",
-]

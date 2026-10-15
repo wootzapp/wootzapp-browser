@@ -1,6 +1,0 @@
-features:
-- name: clip-path-animatable
-  files: "**"
-- name: unset-value
-  files:
-  - clip-path-animation-unset.html

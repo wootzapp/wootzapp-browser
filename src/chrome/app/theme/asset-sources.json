@@ -1,0 +1,511 @@
+{
+  "product": "w8-core",
+  "company": "Wootzapp",
+  "repository": "wootzapp-browser",
+  "source_tree_sha": "80bcb13a3c125d828f380958d58843b1b259079c",
+  "sources": [
+    {
+      "path": "src/chrome/app/theme/chromium/wootzapp-mark.png",
+      "repository": "https://github.com/wootzapp/wootz-browser",
+      "source_path": "src/chrome/browser/resources/extension_store/Wootzapp.png",
+      "git_blob_sha": "e05ede142a06017652b434ef5151f95d42db158a",
+      "sha256": "77f97dc7f7daf6d60a3106637249728a0a4e12e5f8cbe134b26256f208970430"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/wootzapp-icon.png",
+      "repository": "https://github.com/wootzapp/wootz-browser",
+      "source_path": "src/chrome/android/java/res_chromium_base/mipmap-xxxhdpi/app_icon.png",
+      "git_blob_sha": "81413bef4af11e2a27965bb080ec22938f5f350d",
+      "sha256": "58a056a824d5e65480fec81124d1004bc02d1da3a03f2b080557a0efc19f524a"
+    }
+  ],
+  "replacements": [
+    {
+      "path": "src/chrome/app/theme/chromium/linux/product_logo_128.png",
+      "sha256": "b596bff7edf927e09a8c87b31a6f0a637fe075bdab3ff2e82806dc65922cf0fe",
+      "size": [
+        128,
+        128
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/linux/product_logo_24.png",
+      "sha256": "88493745c6d6b29c983c63c994728b936216efefd6af42bc48fa860f99c9bdcb",
+      "size": [
+        24,
+        24
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/linux/product_logo_256.png",
+      "sha256": "363c61ad58aa2c84a52258235e117ca4f2b690c106e8c03685ed702f3f76a125",
+      "size": [
+        256,
+        256
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/linux/product_logo_48.png",
+      "sha256": "de3058f8ef95f1f8da76e6d2e3ee0fef974bda40b128e178de30a047200d3b75",
+      "size": [
+        48,
+        48
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/linux/product_logo_64.png",
+      "sha256": "59812d3412695152b0655174885796c10eb82ecc2d9dd1d219c71b686a877906",
+      "size": [
+        64,
+        64
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/mac/Assets.xcassets/AppIcon.appiconset/appicon_1024.png",
+      "sha256": "9866975d5e035359774ca2e4be36439e31ca34e485bc19497313f831144078c3",
+      "size": [
+        1024,
+        1024
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/mac/Assets.xcassets/AppIcon.appiconset/appicon_128.png",
+      "sha256": "b596bff7edf927e09a8c87b31a6f0a637fe075bdab3ff2e82806dc65922cf0fe",
+      "size": [
+        128,
+        128
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/mac/Assets.xcassets/AppIcon.appiconset/appicon_16.png",
+      "sha256": "9bf0df2e75d3aef3ac2bab5453a6e91c9ec7f0d1e16c83cd65e300b7c07dbac7",
+      "size": [
+        16,
+        16
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/mac/Assets.xcassets/AppIcon.appiconset/appicon_256.png",
+      "sha256": "363c61ad58aa2c84a52258235e117ca4f2b690c106e8c03685ed702f3f76a125",
+      "size": [
+        256,
+        256
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/mac/Assets.xcassets/AppIcon.appiconset/appicon_32.png",
+      "sha256": "f32fb67bcb22b0bbcb46feac5643e4dd8bb88bbefa9f9ef094b58ffafb1fee30",
+      "size": [
+        32,
+        32
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/mac/Assets.xcassets/AppIcon.appiconset/appicon_512.png",
+      "sha256": "ad220c73c17518616ac11093e0669949dfcda775d50985c50059f983aa56d018",
+      "size": [
+        512,
+        512
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/mac/Assets.xcassets/AppIcon.appiconset/appicon_64.png",
+      "sha256": "59812d3412695152b0655174885796c10eb82ecc2d9dd1d219c71b686a877906",
+      "size": [
+        64,
+        64
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/mac/Assets.xcassets/Icon.iconset/icon_256x256.png",
+      "sha256": "363c61ad58aa2c84a52258235e117ca4f2b690c106e8c03685ed702f3f76a125",
+      "size": [
+        256,
+        256
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/mac/Assets.xcassets/Icon.iconset/icon_256x256@2x.png",
+      "sha256": "ad220c73c17518616ac11093e0669949dfcda775d50985c50059f983aa56d018",
+      "size": [
+        512,
+        512
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/product_logo.svg",
+      "sha256": "917482e4bdb874641bdb11d8f9981571d01063208593f93242467e94c309a2a9",
+      "format": "SVG",
+      "viewBox": "0 0 256 256",
+      "transformation": "Original Wootzapp mark embedded; existing view box retained"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/product_logo_128.png",
+      "sha256": "b596bff7edf927e09a8c87b31a6f0a637fe075bdab3ff2e82806dc65922cf0fe",
+      "size": [
+        128,
+        128
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/product_logo_16.png",
+      "sha256": "9bf0df2e75d3aef3ac2bab5453a6e91c9ec7f0d1e16c83cd65e300b7c07dbac7",
+      "size": [
+        16,
+        16
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/product_logo_22_mono.png",
+      "sha256": "f0ad5ff07d89a73d2e2846f6770f43bb7bee82031c5ed29918c3689805d6fc10",
+      "size": [
+        22,
+        22
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/product_logo_24.png",
+      "sha256": "88493745c6d6b29c983c63c994728b936216efefd6af42bc48fa860f99c9bdcb",
+      "size": [
+        24,
+        24
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/product_logo_256.png",
+      "sha256": "363c61ad58aa2c84a52258235e117ca4f2b690c106e8c03685ed702f3f76a125",
+      "size": [
+        256,
+        256
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/product_logo_48.png",
+      "sha256": "de3058f8ef95f1f8da76e6d2e3ee0fef974bda40b128e178de30a047200d3b75",
+      "size": [
+        48,
+        48
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/product_logo_64.png",
+      "sha256": "59812d3412695152b0655174885796c10eb82ecc2d9dd1d219c71b686a877906",
+      "size": [
+        64,
+        64
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/product_logo_animation.svg",
+      "sha256": "9a9073d28bc3019502bfb2a7ef50f6196e1294414eb60799fd6024b8a70eecbc",
+      "format": "SVG",
+      "viewBox": "0 0 160 160",
+      "transformation": "Original Wootzapp mark embedded; existing view box retained"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/win/app_list.ico",
+      "sha256": "13ef81f9b362c51ee0c762f7b8bc9938c5d5d4468c5f135256a193e52a46bb70",
+      "sizes": [
+        [
+          16,
+          16
+        ],
+        [
+          32,
+          32
+        ],
+        [
+          48,
+          48
+        ],
+        [
+          256,
+          256
+        ]
+      ],
+      "format": "ICO",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/win/chromium.ico",
+      "sha256": "13ef81f9b362c51ee0c762f7b8bc9938c5d5d4468c5f135256a193e52a46bb70",
+      "sizes": [
+        [
+          16,
+          16
+        ],
+        [
+          32,
+          32
+        ],
+        [
+          48,
+          48
+        ],
+        [
+          256,
+          256
+        ]
+      ],
+      "format": "ICO",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/win/chromium_doc.ico",
+      "sha256": "13ef81f9b362c51ee0c762f7b8bc9938c5d5d4468c5f135256a193e52a46bb70",
+      "sizes": [
+        [
+          16,
+          16
+        ],
+        [
+          32,
+          32
+        ],
+        [
+          48,
+          48
+        ],
+        [
+          256,
+          256
+        ]
+      ],
+      "format": "ICO",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/win/chromium_pdf.ico",
+      "sha256": "13ef81f9b362c51ee0c762f7b8bc9938c5d5d4468c5f135256a193e52a46bb70",
+      "sizes": [
+        [
+          16,
+          16
+        ],
+        [
+          32,
+          32
+        ],
+        [
+          48,
+          48
+        ],
+        [
+          256,
+          256
+        ]
+      ],
+      "format": "ICO",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/win/tiles/Logo.png",
+      "sha256": "e9c0d252ec8228a8739ad90b358d7dabd14851220cdf2baa87621ee0ab8aa5e9",
+      "size": [
+        600,
+        600
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/chromium/win/tiles/SmallLogo.png",
+      "sha256": "88054cb1264b733725c52a28b58f159c9a67a8d81b6700cd19ff6cbbeba22180",
+      "size": [
+        176,
+        176
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/default_100_percent/chromium/linux/product_logo_16.png",
+      "sha256": "9bf0df2e75d3aef3ac2bab5453a6e91c9ec7f0d1e16c83cd65e300b7c07dbac7",
+      "size": [
+        16,
+        16
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/default_100_percent/chromium/linux/product_logo_32.png",
+      "sha256": "f32fb67bcb22b0bbcb46feac5643e4dd8bb88bbefa9f9ef094b58ffafb1fee30",
+      "size": [
+        32,
+        32
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/default_100_percent/chromium/product_logo_16.png",
+      "sha256": "9bf0df2e75d3aef3ac2bab5453a6e91c9ec7f0d1e16c83cd65e300b7c07dbac7",
+      "size": [
+        16,
+        16
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/default_100_percent/chromium/product_logo_32.png",
+      "sha256": "f32fb67bcb22b0bbcb46feac5643e4dd8bb88bbefa9f9ef094b58ffafb1fee30",
+      "size": [
+        32,
+        32
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/default_100_percent/chromium/product_logo_name_22.png",
+      "sha256": "63fa3aa0ffd876b37489f7f6533f671d9889fcc96e8550886e92eba78873fd3e",
+      "size": [
+        97,
+        22
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/default_100_percent/chromium/product_logo_name_22_white.png",
+      "sha256": "3a0c81a3d1ad0cbdbfa52b47e65e071d0a0be2830e5d3df0f57bf51d6e3867bc",
+      "size": [
+        97,
+        22
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/default_200_percent/chromium/product_logo_16.png",
+      "sha256": "f32fb67bcb22b0bbcb46feac5643e4dd8bb88bbefa9f9ef094b58ffafb1fee30",
+      "size": [
+        32,
+        32
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/default_200_percent/chromium/product_logo_32.png",
+      "sha256": "59812d3412695152b0655174885796c10eb82ecc2d9dd1d219c71b686a877906",
+      "size": [
+        64,
+        64
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/default_200_percent/chromium/product_logo_name_22.png",
+      "sha256": "d88a3c9350464606e257c91084ec5fd787eb8a977b5eecac64c768978731ac8c",
+      "size": [
+        194,
+        44
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/chrome/app/theme/default_200_percent/chromium/product_logo_name_22_white.png",
+      "sha256": "ce797beec9060cae34521b76e6134b47cde4969712146158163e83a48ee136cc",
+      "size": [
+        194,
+        44
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/components/resources/default_100_percent/chromium/product_logo.png",
+      "sha256": "e1a969c5d4b4cfcdc803fe6eb31377cdcba328740b4465efad2b1c7600f96dff",
+      "size": [
+        171,
+        32
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/components/resources/default_100_percent/chromium/product_logo_white.png",
+      "sha256": "11c458edb02fe897b441bcc94df696e3451cecbac0f547f30f8e08db3019eb45",
+      "size": [
+        171,
+        32
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/components/resources/default_200_percent/chromium/product_logo.png",
+      "sha256": "0c8db01bf2b33039f3d48030dff80027b9644c58c2dbc9b8ae67d5f7aa31f60d",
+      "size": [
+        342,
+        64
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    },
+    {
+      "path": "src/components/resources/default_200_percent/chromium/product_logo_white.png",
+      "sha256": "b99aa28f535ffb48cbc3771f95f10b52859a22a0a09607addde19d64b17f2324",
+      "size": [
+        342,
+        64
+      ],
+      "format": "PNG",
+      "transformation": "Official Wootzapp artwork resized to existing bounds; Wootzapp text added to wordmarks"
+    }
+  ],
+  "preserved": [
+    "Build configuration, resource identifiers and filenames",
+    "Executable and protocol names",
+    "Copyright notices and external-service names",
+    "Native macOS app.icns, Assets.car, and Icon Composer layers",
+    "Legacy Linux XPM icon"
+  ]
+}

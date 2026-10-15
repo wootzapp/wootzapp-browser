@@ -1,2 +1,0 @@
-Tests PublicKeyCredential.getClientCapabilities() in a secure context.
-Request to https://test.com/index.html, type: Document

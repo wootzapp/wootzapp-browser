@@ -1,5 +1,0 @@
-specific_include_rules = {
-  "management_ui\\.cc": [
-    "+ash/strings",
-  ]
-}

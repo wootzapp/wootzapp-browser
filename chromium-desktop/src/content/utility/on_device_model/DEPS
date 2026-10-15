@@ -1,4 +1,0 @@
-include_rules = [
-  "+services/on_device_model/ml",
-  "+third_party/dawn/include",
-]

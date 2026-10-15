@@ -1,4 +1,0 @@
-AXFocusedUIElementChanged on AXMenuItem AXValue='one selected'
-AXFocusedUIElementChanged on AXMenuItem AXValue='two selected'
-AXSelectedChildrenChanged on AXList
-AXSelectedChildrenChanged on AXList

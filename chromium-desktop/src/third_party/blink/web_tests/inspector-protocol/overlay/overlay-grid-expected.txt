@@ -1,3 +1,0 @@
-Test that showing the grid overlay with line names does not crash for out-of-bound line specs
-did not crash
-

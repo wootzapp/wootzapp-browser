@@ -1,4 +1,0 @@
-include_rules = [
-  "+components/sync/protocol/user_event_specifics.pb.h",
-  "+components/password_manager/core/browser/hash_password_manager.h",
-]

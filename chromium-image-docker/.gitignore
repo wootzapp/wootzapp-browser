@@ -1,5 +1,0 @@
-build/*
-_pycache_
-.env
-.env.*
-!.env.example

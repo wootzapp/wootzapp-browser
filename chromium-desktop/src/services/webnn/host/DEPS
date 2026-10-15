@@ -1,5 +1,0 @@
-include_rules = [
-  "+services/webnn/public/cpp",
-  "+services/webnn/public/mojom",
-  "+third_party/windows_app_sdk_headers",
-]

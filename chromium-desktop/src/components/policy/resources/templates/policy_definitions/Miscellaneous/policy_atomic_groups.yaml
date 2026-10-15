@@ -1,6 +1,0 @@
-SocketPoolSizeSettings:
-  caption: Socket pool size settings
-  policies:
-  - MaxConnectionsPerProxy
-  - MaxConnectionsPerProxyForWebSocket
-  - AllowSocketPoolSizeRandomizationForProxies

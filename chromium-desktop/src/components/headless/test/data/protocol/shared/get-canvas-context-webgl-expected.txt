@@ -1,2 +1,0 @@
-Tests that canvas.getContext("webgl") returns a valid context.
-Got a valid WebGL context

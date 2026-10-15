@@ -1,5 +1,0 @@
-[document web]
-++[combo box]
-++++[menu]
-++[section]
-++++[static] name='Done'
