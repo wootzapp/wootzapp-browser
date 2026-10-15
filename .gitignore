@@ -1,0 +1,29 @@
+# Local Chromium and depot_tools workspaces
+/chromium/
+/depot_tools/
+/w8-workspace/
+/.gclient
+/.gclient_entries
+/.gclient_previous_sync_commits
+/.gcs_entries
+/.cipd/
+
+# Browser build output and generated runtime lists
+/out/
+/src/out/
+/src/chrome.runtime_deps
+
+# Dependency and language caches
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local configuration, logs, and editor files
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.idea/
+.vscode/
