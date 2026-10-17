@@ -1,12 +1,13 @@
-# w8-core
+# Wootzapp Browser
 
 <img src="src/chrome/app/theme/chromium/wootzapp-icon.png" alt="Wootzapp logo" width="120" />
 
-w8-core is Wootzapp's Chromium-based desktop browser engine. This repository
+**w8-core** is the Chromium-based engine behind Wootzapp Browser. It supports
+interactive browsing, automation, capture, and replay. This repository
 contains the maintained source overlay that is applied to a clean Chromium
 checkout before the final browser build.
 
-## What w8-core provides
+## What Wootzapp Browser provides
 
 - A normal headed desktop browser built on Chromium.
 - A headless mode for automation and CI.
@@ -15,7 +16,6 @@ checkout before the final browser build.
   layout signals, and model-facing DOM data.
 - Named authoring sessions that capture supported network and browser state.
 - Offline replay from a previously captured authoring session.
-- w8-core product names, icons, and desktop branding.
 
 ## System requirements
 
@@ -372,5 +372,5 @@ that embeds this browser; they are intentionally not duplicated here.
 
 ## License
 
-w8-core is licensed under the GNU Affero General Public License v3.0. See
-[`LICENSE`](LICENSE).
+The w8-core source overlay is licensed under the GNU Affero General Public
+License v3.0. See [`LICENSE`](LICENSE).
