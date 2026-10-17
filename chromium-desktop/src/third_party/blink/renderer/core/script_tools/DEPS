@@ -1,5 +1,0 @@
-specific_include_rules = {
-  "model_context\.cc": [
-    "+url/url_constants.h",
-  ],
-}

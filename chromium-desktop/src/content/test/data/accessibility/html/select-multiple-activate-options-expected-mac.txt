@@ -1,5 +1,0 @@
-AXWebArea
-++AXGroup
-++++AXList
-++++++AXMenuItem AXValue='one selected'
-++++++AXMenuItem AXValue='two selected'

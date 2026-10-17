@@ -1,9 +1,0 @@
-Tests that Network.requestServedFromCache are reported
-{
-    method : Network.requestServedFromCache
-    params : {
-        requestId : <string>
-    }
-    sessionId : <string>
-}
-

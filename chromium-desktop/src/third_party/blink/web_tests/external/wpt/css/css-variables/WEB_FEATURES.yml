@@ -1,8 +1,0 @@
-features:
-- name: custom-properties
-  files: "**"
-- name: unset-value
-  files:
-  - variable-declaration-56.html
-  - variable-declaration-57.html
-  - variable-declaration-58.html

@@ -1,3 +1,0 @@
-Verify pattern matched network conditions offline emulation are applied to worker main script in a local iframe.
-iframe worker script load result: worker failed to load
-

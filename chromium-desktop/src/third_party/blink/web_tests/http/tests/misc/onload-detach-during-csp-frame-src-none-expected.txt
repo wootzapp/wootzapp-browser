@@ -1,3 +1,0 @@
-CONSOLE ERROR: Framing '' violates the following Content Security Policy directive: "frame-src 'none'". The request has been blocked.
-
-PASS

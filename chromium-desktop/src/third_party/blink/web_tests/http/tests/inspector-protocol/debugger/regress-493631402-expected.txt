@@ -1,2 +1,0 @@
-Regression test for crbug.com/493631402
-

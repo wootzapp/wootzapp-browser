@@ -1,2 +1,0 @@
-Verify that modifying active @font-face with pending style invalidations does not crash via Devtools
-

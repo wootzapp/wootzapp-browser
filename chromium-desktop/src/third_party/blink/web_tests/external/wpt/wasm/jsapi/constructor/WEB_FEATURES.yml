@@ -1,8 +1,0 @@
-features:
-- name: wasm
-  files:
-  - "*"
-  - "!multi-value.any.js"
-- name: wasm-multi-value
-  files:
-  - "multi-value.any.js"

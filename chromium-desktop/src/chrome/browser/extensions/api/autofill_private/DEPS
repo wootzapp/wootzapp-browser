@@ -1,6 +1,0 @@
-include_rules = [
-  "+components/consent_auditor",
-  "+components/wallet/core/browser",
-  "+components/wallet/core/common",
-  "+third_party/libaddressinput/src/cpp/include/libaddressinput",
-]

@@ -1,5 +1,0 @@
-include_rules = [
-    "+base/command_line.h",
-    "+mojo/public/cpp/bindings",
-    "+skia/ext/image_operations.h",
-]

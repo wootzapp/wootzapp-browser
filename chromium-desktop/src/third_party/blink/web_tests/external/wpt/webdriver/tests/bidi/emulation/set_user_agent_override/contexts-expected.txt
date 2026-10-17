@@ -1,5 +1,0 @@
-This is a wdspec test.
-[FAIL] test_iframe[cross_origin]
-  webdriver.bidi.error.UnknownErrorException: unknown error (navigation canceled by context disposal)
-Harness: the test ran to completion.
-

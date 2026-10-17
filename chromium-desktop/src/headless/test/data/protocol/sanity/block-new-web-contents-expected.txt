@@ -1,3 +1,0 @@
-Tests that --block-new-web-contents blocks new web contents creation.
-window.open() result: null
-New page targets count: 0

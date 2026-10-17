@@ -1,5 +1,0 @@
-features:
-- name: time-relative-selectors
-  files:
-  - "*_past*"
-  - "*_future*"

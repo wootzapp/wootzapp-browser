@@ -1,5 +1,0 @@
-specific_include_rules = {
-  "version_handler_chromeos\\.cc": [
-    "+ash/strings",
-  ],
-}

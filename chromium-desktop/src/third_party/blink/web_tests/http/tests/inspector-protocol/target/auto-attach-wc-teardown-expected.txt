@@ -1,2 +1,0 @@
-Assure page is not re-attached during WC being closed.
-

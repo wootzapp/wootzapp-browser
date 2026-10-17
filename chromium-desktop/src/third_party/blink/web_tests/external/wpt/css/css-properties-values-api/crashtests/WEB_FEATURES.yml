@@ -1,4 +1,0 @@
-features:
-- name: color-contrast
-  files:
-  - consume-color-contrast-crash.html

@@ -1,1 +1,0 @@
-This directory is for testing prerender cross origin iframes scroll and focus interactions. (https://crbug.com/493322503).

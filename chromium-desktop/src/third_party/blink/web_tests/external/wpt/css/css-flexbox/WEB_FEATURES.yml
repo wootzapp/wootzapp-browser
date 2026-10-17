@@ -1,6 +1,0 @@
-features:
-- name: flexbox
-  files: "**"
-- name: flexbox-gap
-  files:
-  - "*gap*"

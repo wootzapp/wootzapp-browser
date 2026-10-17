@@ -1,4 +1,0 @@
-Tests that Storage.getStorageKey() returns the correct value for a dedicated worker.
-Main storage key is correct: true
-Worker storage key matches main key: true
-

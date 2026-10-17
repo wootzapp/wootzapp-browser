@@ -1,8 +1,0 @@
-features:
-- name: channel-messaging
-  files:
-  - message-channel-transferable.html
-- name: postmessage
-  files:
-  - '*'
-  - '!message-channel-transferable.html'

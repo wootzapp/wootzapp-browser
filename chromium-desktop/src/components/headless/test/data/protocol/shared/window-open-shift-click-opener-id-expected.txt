@@ -1,2 +1,0 @@
-Tests that opener is NOT specified on a page opened via Shift+Click.
-TargetInfo.openerId: undefined

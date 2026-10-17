@@ -1,2 +1,0 @@
-CONSOLE ERROR: Uncaught ReferenceError: XSLTProcessor is not defined
-Test passes if it does not crash.

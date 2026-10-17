@@ -1,5 +1,0 @@
-include_rules = [
-  "+chrome/browser/webnn",
-  "+services/webnn/public/cpp/webnn_buildflags.h",
-  "+services/webnn/public/mojom/webnn_service_introspection.mojom.h",
-]

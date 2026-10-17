@@ -1,8 +1,0 @@
-features:
-- name: font-loading
-  files:
-  - "*"
-  - "!fontface-override-descriptor-getter-setter.sub.html"
-- name: font-metric-overrides
-  files:
-  - fontface-override-descriptor-getter-setter.sub.html

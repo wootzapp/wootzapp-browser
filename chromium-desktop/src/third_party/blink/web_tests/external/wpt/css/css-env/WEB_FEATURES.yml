@@ -1,4 +1,0 @@
-features:
-- name: safe-area-inset
-  files:
-  - "env-parsing*"

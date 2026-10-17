@@ -1,1 +1,0 @@
-This virtual test suite tests the global limits of the durable messages feature.

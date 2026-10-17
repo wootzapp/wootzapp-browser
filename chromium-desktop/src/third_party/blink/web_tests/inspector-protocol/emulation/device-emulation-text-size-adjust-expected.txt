@@ -1,8 +1,0 @@
-Tests that text-size-adjust is applied when mobile emulation is enabled.
-Before emulation:
-10px
-Enabling mobile emulation:
-20px
-Clearing emulation:
-10px
-

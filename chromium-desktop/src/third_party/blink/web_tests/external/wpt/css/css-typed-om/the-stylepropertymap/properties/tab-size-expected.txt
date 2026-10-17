@@ -1,5 +1,0 @@
-This is a testharness.js-based test.
-[FAIL] Can set 'tab-size' to a number: 3.14
-  assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
-Harness: the test ran to completion.
-

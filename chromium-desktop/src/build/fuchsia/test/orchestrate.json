@@ -1,6 +1,0 @@
-{
-  "emulator": {
-    "ffx_path": "third_party/fuchsia-sdk/sdk/tools/x64/ffx",
-    "local_pb": "third_party/fuchsia-sdk/images/terminal/x64/"
-  }
-}

@@ -1,4 +1,0 @@
-include_rules = [
-  "+components/vrp_flags",
-  "+content/browser/gpu/gpu_process_host.h",
-]

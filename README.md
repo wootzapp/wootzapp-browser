@@ -1,274 +1,376 @@
 # w8-core
 
-w8-core is a Chromium-based desktop browser runtime for normal browsing, browser automation, browser-side capture, and repeatable authoring workflows.
+<img src="src/chrome/app/theme/chromium/wootzapp-icon.png" alt="Wootzapp logo" width="120" />
 
-w8-core can be started as a Dockerized desktop browser, used visually through noVNC, controlled through Chrome DevTools Protocol, and extended through ChromiumRL CDP commands for structured browser state capture.
+w8-core is Wootzapp's Chromium-based desktop browser engine. This repository
+contains the maintained source overlay that is applied to a clean Chromium
+checkout before the final browser build.
 
-## What you can do
+## What w8-core provides
 
-- Run w8-core in headless mode for automation.
-- Run w8-core in headed mode and open it through noVNC.
-- Connect automation tools through CDP on port `9222`.
-- Use ChromiumRL CDP commands for browser observation and capture.
-- Use authoring capture mode to archive a web session.
-- Use authoring replay mode to replay a captured session offline.
-- Use optional agent-browser automation when the image includes it.
+- A normal headed desktop browser built on Chromium.
+- A headless mode for automation and CI.
+- Chrome DevTools Protocol access for external browser tools.
+- The ChromiumRL CDP domain for structured capture, observations, comparison,
+  layout signals, and model-facing DOM data.
+- Named authoring sessions that capture supported network and browser state.
+- Offline replay from a previously captured authoring session.
+- w8-core product names, icons, and desktop branding.
 
-## Quick start
+## System requirements
 
-From the repository root:
+- A 64-bit Linux system, or WSL 2 on Windows.
+- At least 32 GiB RAM and 200 GiB free disk space.
+- Git, Python 3, and the packages installed by Chromium's dependency script.
+- A fast Linux filesystem. On WSL, avoid building under `/mnt/c`.
+
+Do not apply the overlay to a Chromium checkout containing unrelated local
+changes. Keep the Chromium checkout and this repository beside each other.
+
+## Build Chromium
+
+### 1. Install depot_tools
+
+Create a workspace and clone Chromium's build tools:
 
 ```bash
-cd chromium-image-docker
-docker compose up -d
+mkdir -p w8-workspace
+cd w8-workspace
+git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+export PATH="$PATH:$(pwd)/depot_tools"
 ```
 
-Check that w8-core is ready:
+Add the `export` command to your shell profile if you want `depot_tools`
+available in new terminals.
+
+### 2. Fetch the official source
 
 ```bash
-docker compose exec w8-core chromium-runtime-entrypoint status
+mkdir -p chromium
+cd chromium
+fetch --nohooks --no-history chromium
+gclient sync --nohooks \
+  --revision src@refs/tags/152.0.7948.0 \
+  --reset --upstream -D --force --no-history --shallow
 ```
 
-Open the CDP version endpoint from the host:
+The fetch creates `chromium/src/` and the `.gclient` configuration.
+
+### 3. Install dependencies and run hooks
+
+```bash
+cd src
+./build/install-build-deps.sh
+gclient runhooks
+```
+
+### 4. Build official Chromium first
+
+Generate the Release build with visible, reproducible arguments:
+
+```bash
+gn gen out/Release --args='is_debug=false
+is_component_build=false
+symbol_level=0
+blink_symbol_level=0
+v8_symbol_level=0
+proprietary_codecs=true
+ffmpeg_branding="Chrome"'
+autoninja -C out/Release chrome
+./out/Release/chrome --version
+```
+
+Do not apply the w8-core files until this build succeeds. This separates
+upstream setup failures from w8-core source failures.
+
+## Build w8-core
+
+### 5. Clone the w8-core source overlay
+
+Return to the workspace and clone this repository:
+
+```bash
+cd ../..
+git clone --depth 1 https://github.com/wootzapp/wootzapp-browser.git
+```
+
+The workspace now contains `chromium/`, `depot_tools/`, and
+`wootzapp-browser/` beside each other.
+
+### 6. Apply the overlay
+
+```bash
+sudo chmod -R u+w chromium/src/
+cp -r wootzapp-browser/src/* chromium/src/
+```
+
+Only files present under `wootzapp-browser/src/` are copied. The repository
+does not contain or replace the complete Chromium checkout.
+
+### 7. Rebuild the browser
+
+```bash
+cd chromium
+gclient runhooks
+cd src
+gn gen out/Release
+autoninja -C out/Release chrome
+./out/Release/chrome --version
+```
+
+The second build reuses the Release arguments stored in `out/Release`.
+
+## Run the built browser
+
+Run these commands from the Chromium `src/` directory after the w8-core
+rebuild completes.
+
+### Headed mode
+
+Headed mode opens the normal desktop window and exposes CDP locally:
+
+```bash
+./out/Release/chrome --user-data-dir=/tmp/w8-core-profile --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 '--remote-allow-origins=*' about:blank
+```
+
+This requires a working desktop display. Use a different `--user-data-dir`
+when another browser process is already using this profile. For a remote
+server, use the Docker/noVNC browser harness documented in the
+[`w8-domdiff-bench` runbook](https://github.com/wootzapp/w8-domdiff-bench/blob/w8-reproducible/docs/runbook.md#browser-runtime).
+
+### Headless mode
+
+Headless mode runs without a visible browser window:
+
+```bash
+./out/Release/chrome --headless=new --disable-gpu --user-data-dir=/tmp/w8-core-profile --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 '--remote-allow-origins=*' about:blank
+```
+
+Replace `about:blank` with a URL to open a specific page. Add other Chromium
+flags before the URL.
+
+### Check CDP
+
+While the browser is running, open:
 
 ```text
 http://127.0.0.1:9222/json/version
 ```
 
-Stop w8-core:
+The response includes `webSocketDebuggerUrl`, which CDP clients use to
+connect to the browser.
+
+### Docker and noVNC
+
+The benchmark repository packages a local w8-core build into an image and
+assigns conflict-free host ports. Follow its browser-build instructions
+first. Once its Python package and runtime configuration exist, run these
+commands from the `w8-domdiff-bench` repository root:
 
 ```bash
-docker compose down
+source .venv/bin/activate
+python -m w8bench.task_recorder.browser_runtime configure
+docker compose --env-file .env up -d --wait w8-core
+python -m w8bench.task_recorder.browser_runtime status
 ```
 
-## Build the Docker image
+The status command prints the CDP and noVNC URLs. It also verifies the
+browser, container health, and bundled agent-browser command.
 
-The Docker image requires a prepared w8-core payload under:
+Stop this checkout's container with:
+
+```bash
+docker compose --env-file .env down
+```
+
+## What the overlay provides
+
+The overlay adds w8-core browser behavior while retaining Chromium's normal
+desktop build and DevTools support. Its main additions include:
+
+- ChromiumRL commands for structured browser capture and model-facing DOM;
+- capture and replay support for named authoring sessions;
+- offline-page support used by replay workflows;
+- w8-core product names, icons, and desktop branding.
+
+### ChromiumRL CDP domain
+
+The ChromiumRL protocol schema is maintained at:
 
 ```text
-chromium-image-docker/build/
+src/third_party/blink/public/devtools_protocol/domains/ChromiumRL.pdl
 ```
 
-At minimum, the payload must contain the w8-core executable:
+The complete command surface is:
+
+| Command | Purpose |
+| --- | --- |
+| `ChromiumRL.enable` | Starts ChromiumRL tracing and selects the touch, layout, CLS, and compositor signals to collect. |
+| `ChromiumRL.disable` | Stops ChromiumRL tracing. |
+| `ChromiumRL.getTouchTraces` | Returns captured touch events and the elements attributed to them. |
+| `ChromiumRL.getLayoutTimings` | Returns per-element and frame-level layout timing information. |
+| `ChromiumRL.getCLSAttribution` | Returns cumulative layout-shift entries and their attributed elements. |
+| `ChromiumRL.getCompositorLayers` | Returns compositor-layer information, including optional paint and transform details. |
+| `ChromiumRL.captureInteraction` | Collects touch, layout, CLS, and compositor signals around one interaction. |
+| `ChromiumRL.getVisualHash` | Returns a hash of the current visual state and whether a visual update occurred. |
+| `ChromiumRL.captureStateSnapshot` | Captures the semantic and visual node state used by the earlier state-comparison API. |
+| `ChromiumRL.computeStateDiff` | Compares the current page with a supplied state snapshot. |
+| `ChromiumRL.saveDOMState` | Captures a rich DOM state containing styles, XPath information, and layout geometry. |
+| `ChromiumRL.compareDOMState` | Compares a saved rich DOM state with the current live page. |
+| `ChromiumRL.getAgentObservation` | Returns interactive elements and optional page content for browser navigation. |
+| `ChromiumRL.captureStructuredSnapshot` | Captures the structured page graph from DOM, accessibility, and layout data. |
+| `ChromiumRL.compareStructuredSnapshots` | Compares two supplied structured snapshots without reading the live document. |
+| `ChromiumRL.captureSnapshotDiff` | Captures the live after-state and compares it with a supplied before-snapshot in one call. |
+| `ChromiumRL.getModelDOM` | Builds model-facing structured DOM data from a supplied snapshot without recapturing the page. |
+| `ChromiumRL.startDOMDiff` | Starts live DOM-difference tracking. Its first report represents the initial state. |
+| `ChromiumRL.stopDOMDiff` | Stops live DOM-difference tracking. |
+
+The domain can also emit `domDiffOccurred`, `layoutShiftDetected`,
+`touchInteractionCompleted`, and `layerTreeChanged` events. The exact command
+parameters, return objects, events, and type definitions are in
+`ChromiumRL.pdl`. A tool does not need to use every command; it selects the
+part of the protocol required by its workflow.
+
+These commands are browser-side APIs. A separate harness may call them over
+the Chrome DevTools Protocol and decide how to store or use their responses.
+
+### Structured capture example
+
+After connecting to the WebSocket URL returned by `/json/version`, a CDP
+client can send:
+
+```json
+{
+  "id": 1,
+  "method": "ChromiumRL.captureStructuredSnapshot",
+  "params": {
+    "inViewportOnly": true,
+    "includeOffscreen": false
+  }
+}
+```
+
+The returned `result.snapshot` is structured browser data. To build the
+model-facing representation from that exact snapshot, send it back without
+recapturing the live page:
+
+```json
+{
+  "id": 2,
+  "method": "ChromiumRL.getModelDOM",
+  "params": {
+    "snapshot": {
+      "...": "complete result.snapshot object"
+    }
+  }
+}
+```
+
+The placeholder represents the complete snapshot object, not a string.
+
+## Authoring modes
+
+The browser supports normal browsing, capture, and replay.
+
+### Normal browsing
+
+Launch without either authoring mode flag to browse normally. No authoring
+archive is written or read:
+
+```bash
+./out/Release/chrome --user-data-dir=/tmp/w8-core-normal https://example.com
+```
+
+### Session configuration
+
+Direct capture and replay launches use these flags:
 
 ```text
-chromium-image-docker/build/chrome
+--wootz-authoring-capture
+--wootz-authoring-replay
+--wootz-authoring-session=<session-name>
 ```
 
-Build the image:
+Capture stores supported browser responses and state for the named session.
+Replay serves that stored session without silently treating live network data
+as recorded evidence. If no session is supplied, the browser uses `default`.
+Capture and replay must use the same session name and the same browser
+profile. Using a different profile points the browser at a different archive.
+
+### Start capture mode
+
+Run capture with a dedicated profile and a named session:
 
 ```bash
-cd chromium-image-docker
-./scripts/build_image.sh
+./out/Release/chrome --user-data-dir=/tmp/w8-core-authoring --remote-debugging-port=9222 --wootz-authoring-capture --wootz-authoring-session=my-session https://example.com
 ```
 
-Use a custom image name:
-
-```bash
-CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop ./scripts/build_image.sh
-```
-
-## Run in headless mode
-
-Headless mode is the default and is useful for automation or CI.
-
-```bash
-cd chromium-image-docker
-CHROMIUM_HEADLESS=1 docker compose up -d
-```
-
-w8-core exposes CDP on the host at:
+Captured data is stored under:
 
 ```text
-127.0.0.1:9222
+/tmp/w8-core-authoring/Default/WootzAuthoring/sessions/my-session/
 ```
 
-## Run in headed mode
-
-Headed mode starts w8-core with an Xvfb display, VNC, and noVNC.
+The archive contains an `index.jsonl` request index and stored payloads.
+Verify that capture produced data before starting replay:
 
 ```bash
-cd chromium-image-docker
-CHROMIUM_HEADLESS=0 docker compose up -d
+test -s /tmp/w8-core-authoring/Default/WootzAuthoring/sessions/my-session/index.jsonl
+find /tmp/w8-core-authoring/Default/WootzAuthoring/sessions/my-session -maxdepth 2 -type f
 ```
 
-Open noVNC:
+### What capture stores
 
-```text
-http://127.0.0.1:6080/vnc.html?host=127.0.0.1&port=6080&autoconnect=1&resize=scale
-```
+Capture records supported HTTP and HTTPS responses, redirects, response
+payloads, same-document routes used by single-page applications,
+`localStorage` for visited origins, and cookies for visited hosts. Main
+document loading bypasses service workers and the HTTP cache so supported
+requests reach the capture path.
 
-Default runtime ports:
+At capture startup, w8-core clears IndexedDB, CacheStorage, and service
+workers in the default storage partition. It keeps existing cookies and
+`localStorage` so the selected browser profile can retain sign-in and site
+state.
 
-```text
-CDP:   9222
-VNC:   5900
-noVNC: 6080
-```
+### Start replay mode
 
-## Start on a specific page
-
-Use `CHROMIUM_START_URL` to choose the initial page:
+Close the capture browser, then reuse the same profile and session:
 
 ```bash
-cd chromium-image-docker
-CHROMIUM_START_URL=https://example.com docker compose up -d
+./out/Release/chrome --user-data-dir=/tmp/w8-core-authoring --remote-debugging-port=9222 --wootz-authoring-replay --wootz-authoring-session=my-session '--host-resolver-rules=MAP * 0.0.0.0' https://example.com
 ```
 
-Use `CHROMIUM_EXTRA_ARGS` for additional Chromium flags:
+The resolver rule prevents an unintended live-network fallback during an
+offline replay. A different profile or session name will not contain the
+captured data.
 
-```bash
-CHROMIUM_EXTRA_ARGS="--disable-features=SomeFeature" docker compose up -d
-```
+### What replay restores
 
-## Runtime commands
+Replay restores archived cookies and `localStorage`, serves stored responses
+and redirects, supports captured same-document routes, and provides a
+synthetic WebSocket connection for offline use. Before restoring the archive,
+it clears the corresponding live application state so that stale state does
+not override the recording.
 
-The container entrypoint is `chromium-runtime-entrypoint`.
+If a request cannot be matched in strict replay, w8-core returns a replay-miss
+response instead of silently fetching that resource from the network. The
+host-resolver rule in the example provides an additional network boundary for
+the direct browser launch.
 
-Useful commands inside the running container:
+Closing and reopening the browser does not remove the authoring session as
+long as the same `--user-data-dir` remains on disk. Deleting that profile also
+deletes the stored sessions inside it.
 
-```bash
-chromium-runtime-entrypoint status
-chromium-runtime-entrypoint wait --timeout 30
-chromium-runtime-entrypoint version
-```
+## Repository layout
 
-With Docker Compose:
+- `src/` contains the maintained source overlay copied onto Chromium.
+- `README.md` documents the reproducible desktop build.
+- `LICENSE` contains the project license.
 
-```bash
-docker compose exec w8-core chromium-runtime-entrypoint status
-docker compose exec w8-core chromium-runtime-entrypoint wait --timeout 30
-docker compose exec w8-core chromium-runtime-entrypoint version
-```
+Runtime packaging, task recording, and model credentials belong to the tool
+that embeds this browser; they are intentionally not duplicated here.
 
-## CDP automation
+## License
 
-w8-core starts Chromium's private debugging endpoint inside the container and exposes a public CDP bridge on port `9222`.
-
-Use this host endpoint for automation tools:
-
-```text
-http://127.0.0.1:9222/json/version
-```
-
-Most CDP clients can connect by reading the `webSocketDebuggerUrl` from that endpoint.
-
-## ChromiumRL CDP
-
-ChromiumRL CDP is a custom DevTools Protocol domain exposed by w8-core.
-
-It provides browser-side commands for structured capture and observation, including:
-
-```text
-ChromiumRL.enable
-ChromiumRL.getTouchTraces
-ChromiumRL.getLayoutTimings
-ChromiumRL.getCLSAttribution
-ChromiumRL.getCompositorLayers
-ChromiumRL.captureInteraction
-ChromiumRL.captureStateSnapshot
-ChromiumRL.computeStateDiff
-ChromiumRL.saveDOMState
-ChromiumRL.compareDOMState
-ChromiumRL.getAgentObservation
-ChromiumRL.captureStructuredSnapshot
-ChromiumRL.getModelDOM
-ChromiumRL.startDOMDiff
-ChromiumRL.stopDOMDiff
-```
-
-`ChromiumRL.getModelDOM` builds structured model-facing DOM data from a
-snapshot previously captured with `ChromiumRL.captureStructuredSnapshot`. It
-takes the captured `StructuredPageSnapshot` as input and returns a `ModelDOM`
-value containing a renderer name and a list of named sections. The command
-works only on the captured snapshot; it does not read or mutate the live
-document.
-
-Typical ChromiumRL usage:
-
-```text
-1. Start the w8-core runtime.
-2. Connect to CDP on 127.0.0.1:9222.
-3. Send ChromiumRL commands through a CDP client.
-4. Store or process the returned browser state in your tool.
-```
-
-## Authoring capture
-
-Authoring capture records browser-side network responses and related browser state for a named session.
-
-Start capture mode:
-
-```bash
-cd chromium-image-docker
-
-AUTHORING_MODE=capture AUTHORING_SESSION=my-session CHROMIUM_START_URL=https://example.com CHROMIUM_HEADLESS=0 docker compose up -d
-```
-
-Capture mode records HTTP/HTTPS responses, redirects, response payloads, selected browser state, and same-document SPA routes.
-
-## Authoring replay
-
-Authoring replay serves a previously captured session back through w8-core.
-
-Start replay mode:
-
-```bash
-cd chromium-image-docker
-
-AUTHORING_MODE=replay AUTHORING_SESSION=my-session CHROMIUM_START_URL=https://example.com CHROMIUM_HEADLESS=0 docker compose up -d
-```
-
-Replay mode loads the captured session, restores captured state, serves matching captured responses, and avoids silently falling back to the live network on strict replay misses.
-
-## Optional agent-browser automation
-
-Some browser images include optional `agent-browser` support for model-driven browser automation.
-
-When available, provide model credentials at runtime and run a natural-language task inside the existing w8-core container:
-
-```bash
-cd chromium-image-docker
-
-docker compose --env-file .env.agent-browser up -d
-
-docker compose --env-file .env.agent-browser exec w8-core   agent-browser task "go to https://example.com and summarize the page"
-```
-
-agent-browser is not started automatically. Normal browsing and authoring workflows are unchanged unless this command is explicitly run.
-
-## Common environment variables
-
-```env
-CHROMIUM_IMAGE_NAME=w8-core:chromium-desktop
-CHROMIUM_CONTAINER_NAME=w8-core-browser-engine
-CHROMIUM_HEADLESS=1
-CHROMIUM_RESET_PROFILE=1
-CHROMIUM_START_URL=about:blank
-CHROMIUM_EXTRA_ARGS=
-CDP_PORT=9222
-VNC_PORT=5900
-NOVNC_PORT=6080
-AUTHORING_MODE=off
-AUTHORING_SESSION=default
-```
-
-## More documentation
-
-Runtime details:
-
-```text
-chromium-image-docker/README.md
-```
-
-Browsing, capturing, and authoring details:
-
-```text
-chromium-desktop/README.md
-```
-
-Optional agent-browser details, when included:
-
-```text
-agent-browser/README.md
-```
+w8-core is licensed under the GNU Affero General Public License v3.0. See
+[`LICENSE`](LICENSE).

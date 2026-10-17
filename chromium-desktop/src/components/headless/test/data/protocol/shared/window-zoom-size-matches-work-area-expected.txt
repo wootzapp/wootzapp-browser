@@ -1,3 +1,0 @@
-Tests maximized/fullscreen window matches workarea.
-10,20 700x500 maximized
-10,20 700x500 fullscreen
