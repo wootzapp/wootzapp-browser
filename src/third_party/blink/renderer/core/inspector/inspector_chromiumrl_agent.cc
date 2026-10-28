@@ -2,6 +2,8 @@
 // File: third_party/blink/renderer/core/inspector/inspector_chromiumrl_agent.cc
 
 #include "third_party/blink/renderer/core/inspector/inspector_chromiumrl_agent.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_font_face.h"
 #include "third_party/blink/renderer/core/css/css_property_name.h"
 
 #include <vector>
@@ -10,8 +12,6 @@
 #include "base/base64.h"
 #include "base/no_destructor.h"
 #include "crypto/sha2.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_mutation_observer_init.h"
-#include "third_party/blink/renderer/core/dom/mutation_record.h"
 #include "third_party/blink/renderer/core/inspector/inspector_dom_agent.h"
 #include "third_party/blink/renderer/core/inspector/protocol/chromium_rl.h"
 #include "third_party/blink/renderer/core/inspector/protocol/protocol.h"
@@ -62,7 +62,116 @@
 #include "third_party/re2/src/re2/re2.h"
 #include "ui/accessibility/ax_enums.mojom-blink.h"
 
+#include <functional>
+#include <limits>
+#include <map>
+#include <set>
+#include <string>
+#include "base/auto_reset.h"
+#include "base/hash/sha1.h"
+#include "base/strings/string_number_conversions.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_document_ready_state.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_font_face_load_status.h"
+#include "third_party/blink/renderer/core/accessibility/ax_context.h"
+#include "third_party/blink/renderer/core/css/css_font_selector.h"
+#include "third_party/blink/renderer/core/css/font_face.h"
+#include "third_party/blink/renderer/core/css/font_face_cache.h"
+#include "third_party/blink/renderer/core/css/font_face_set_document.h"
+#include "third_party/blink/renderer/core/css/style_engine.h"
+#include "third_party/blink/renderer/core/dom/character_data.h"
+#include "third_party/blink/renderer/core/dom/shadow_root.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/geometry/dom_rect_read_only.h"
+#include "third_party/blink/renderer/core/html/html_frame_owner_element.h"
+#include "third_party/blink/renderer/core/html/html_image_element.h"
+#include "third_party/blink/renderer/core/loader/document_loader.h"
+#include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/platform/bindings/source_location.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
+#include "third_party/blink/renderer/platform/scheduler/public/agent_group_scheduler.h"
+#include "third_party/inspector_protocol/crdtp/cbor.h"
+#include "third_party/inspector_protocol/crdtp/frontend_channel.h"
+
 namespace blink {
+class RendererDOMRecorder final : public GarbageCollected<RendererDOMRecorder>,
+                                  public protocol::FrontendChannel {
+ public:
+  explicit RendererDOMRecorder(InspectorChromiumRLAgent*);
+  void Trace(Visitor*) const;
+  protocol::Response captureState(std::optional<int> max_nodes,
+                                  std::optional<bool> include_comments,
+                                  std::unique_ptr<renderer_dom::Dict>* state);
+  protocol::Response startRecording(
+      std::optional<int> max_nodes,
+      std::optional<int> max_events,
+      std::optional<int> max_checkpoints,
+      std::optional<bool> include_comments,
+      std::unique_ptr<renderer_dom::Dict>* recording);
+  protocol::Response readRecording(
+      std::unique_ptr<renderer_dom::Dict>* recording);
+  protocol::Response stopRecording(
+      std::unique_ptr<renderer_dom::Dict>* recording);
+  protocol::Response disable();
+  void DidCommitLoadForLocalFrame(LocalFrame*);
+
+  protocol::Response StartDiff();
+  void StopDiff();
+  void StopDOMObserver();
+  void StartDOMObserver();
+  void SeedDOMObserver();
+  void FollowDOMNode(renderer_dom::Dict*, unsigned depth = 0);
+  void SuspendDOMObserver();
+  void SendProtocolResponse(int,
+                            std::unique_ptr<protocol::Serializable>) override {}
+  void SendProtocolNotification(
+      std::unique_ptr<protocol::Serializable>) override;
+  void FlushProtocolNotifications() override {}
+  protocol::Response checkpointRecording(std::unique_ptr<renderer_dom::Dict>*);
+  bool CheckDocument();
+  bool IsRecording() { return CheckDocument(); }
+  void LayoutShift(const CLSTraceEntry&);
+
+ private:
+  std::unique_ptr<renderer_dom::Dict> Capture(int max_nodes);
+  std::unique_ptr<renderer_dom::Dict> CaptureNode(Node*,
+                                                  const String& position,
+                                                  const String& scope,
+                                                  bool full,
+                                                  bool* truncated);
+  String Position(Node*);
+  String IdentityScope(Node*);
+  std::unique_ptr<renderer_dom::Dict> Location(Node*, bool, bool*);
+  String FrameScope(LocalFrame*);
+  void Mutation(const char* type,
+                Node*,
+                const String& name,
+                const String& value,
+                const String* old_value,
+                std::unique_ptr<renderer_dom::Dict> source);
+  void AddEvent(std::unique_ptr<renderer_dom::Dict>);
+  bool CanRecord();
+  void Checkpoint();
+  void Detach();
+  Member<InspectedFrames> inspected_frames_;
+  Member<InspectorChromiumRLAgent> chromiumrl_agent_;
+  WeakMember<Document> recording_document_;
+  bool include_comments_ = false;
+  std::unique_ptr<renderer_dom::Dict> recording_;
+  base::TimeTicks started_;
+  bool active_ = false;
+  bool capturing_ = false;
+  int max_nodes_ = 500, max_events_ = 4000, max_checkpoints_ = 32;
+  size_t recording_bytes_ = 0;
+  HashMap<int, std::unique_ptr<renderer_dom::Dict>> mutation_cache_;
+  size_t mutation_cache_bytes_ = 0;
+  bool dom_diff_active_ = false;
+  Member<InspectorDOMAgent> dom_agent_;
+  std::unique_ptr<InspectorSessionState> dom_state_;
+  std::unique_ptr<protocol::UberDispatcher> dom_dispatcher_;
+  HashSet<int> followed_dom_nodes_;
+  bool accepting_dom_ = false;
+  unsigned dom_callback_depth_ = 0;
+};
 
 namespace {
 using AgentMap = GCedHeapHashMap<WeakMember<LocalFrame>, WeakMember<InspectorAgent>>;
@@ -105,7 +214,8 @@ String TruncateStructuredString(const String& value,
 }
 }
 
-InspectorChromiumRLAgent::InspectorChromiumRLAgent(InspectedFrames* inspected_frames)
+InspectorChromiumRLAgent::InspectorChromiumRLAgent(
+    InspectedFrames* inspected_frames)
     : inspected_frames_(inspected_frames),
       trace_buffer_(MakeGarbageCollected<ChromiumRLTraceBuffer>()),
       capture_touch_traces_(&agent_state_, false),
@@ -144,6 +254,7 @@ void InspectorChromiumRLAgent::Restore() {
 }
 
 void InspectorChromiumRLAgent::DidCommitLoadForLocalFrame(LocalFrame* frame) {
+  RendererDOMDidCommitLoad(frame);
   if (enabled_.Get() && frame == inspected_frames_->Root()) {
     // Re-register if frame changed
     RegisterAgent();
@@ -271,20 +382,48 @@ protocol::Response InspectorChromiumRLAgent::getLayoutTimings(
   return protocol::Response::Success();
 }
 
+namespace {
+double CLSTotal(const Vector<CLSTraceEntry>& entries,
+                const CLSTraceEntry* next = nullptr) {
+  double best = 0, window = 0, first = 0, last = 0;
+  auto add = [&](const CLSTraceEntry& entry) {
+    if (entry.had_recent_input)
+      return;
+    if (!window || entry.timestamp - last >= 1 ||
+        entry.timestamp - first >= 5) {
+      first = entry.timestamp;
+      window = 0;
+    }
+    window += entry.score;
+    last = entry.timestamp;
+    best = std::max(best, window);
+  };
+  for (const auto& entry : entries)
+    add(entry);
+  if (next)
+    add(*next);
+  return best;
+}
+}  // namespace
+
 protocol::Response InspectorChromiumRLAgent::getCLSAttribution(
     std::optional<double> min_shift_score,
     std::unique_ptr<protocol::Array<protocol::ChromiumRL::CLSEntry>>* entries,
     double* total_cls,
     bool* exceeds_good_threshold) {
-  
+  if (min_shift_score &&
+      (!std::isfinite(*min_shift_score) || *min_shift_score < 0))
+    return protocol::Response::InvalidParams(
+        "minShiftScore must be finite and nonnegative");
   *entries = std::make_unique<protocol::Array<protocol::ChromiumRL::CLSEntry>>();
   const auto& stored = trace_buffer_->GetCLSEntries();
   
   for (const auto& entry : stored) {
-    (*entries)->push_back(BuildCLSEntry(entry));
+    if (entry.score >= min_shift_score.value_or(0))
+      (*entries)->push_back(BuildCLSEntry(entry));
   }
-  
-  *total_cls = trace_buffer_->GetTotalCLS();
+
+  *total_cls = CLSTotal(stored);
   *exceeds_good_threshold = *total_cls > 0.1; // Standard threshold
   
   return protocol::Response::Success();
@@ -451,39 +590,53 @@ void InspectorChromiumRLAgent::OnLayoutShift(
     double score,
     bool had_recent_input,
     const Vector<LayoutShiftTracker::Attribution>& attributions) {
-  if (!enabled_.Get() || !capture_cls_attribution_.Get())
+  bool legacy = enabled_.Get() && capture_cls_attribution_.Get();
+  bool recording =
+      renderer_dom_recorder_ && renderer_dom_recorder_->IsRecording();
+  if ((!legacy && !recording) || !std::isfinite(score) || score < 0)
     return;
-
   CLSTraceEntry entry;
   entry.timestamp = base::TimeTicks::Now().since_origin().InSecondsF();
   entry.score = score;
   entry.had_recent_input = had_recent_input;
-
+  double total_weight = 0;
   for (const auto& attribution : attributions) {
     ShiftedElementEntry element;
     element.node_id = static_cast<int>(attribution.node_id);
     element.previous_rect = gfx::RectF(attribution.old_visual_rect);
     element.current_rect = gfx::RectF(attribution.new_visual_rect);
-    // Rough estimate of contribution if not provided
-    element.score_contribution = score / std::max(static_cast<int>(attributions.size()), 1);
-    
-    if (element.node_id != 0) {
-      if (Node* node = DOMNodeIds::NodeForId(element.node_id)) {
+    const auto& old = element.previous_rect;
+    const auto& now = element.current_rect;
+    element.shift_distance =
+        std::max({std::abs(now.x() - old.x()), std::abs(now.y() - old.y()),
+                  std::abs(now.right() - old.right()),
+                  std::abs(now.bottom() - old.bottom())});
+    auto overlap = gfx::IntersectRects(old, now);
+    double impact_area = old.width() * old.height() +
+                         now.width() * now.height() -
+                         overlap.width() * overlap.height();
+    // A geometric allocation over reported affected elements, not independent
+    // per-element CLS or an inferred JavaScript/CSS root cause.
+    element.score_contribution =
+        std::max(0.0, impact_area) * element.shift_distance;
+    total_weight += element.score_contribution;
+    if (element.node_id) {
+      if (Node* node = DOMNodeIds::NodeForId(element.node_id))
         element.selector_path = BuildSelectorPath(node);
-      }
     }
-    
     entry.shifted_elements.push_back(std::move(element));
   }
-
-  // Fire event to frontend
-  if (GetFrontend()) {
-    GetFrontend()->layoutShiftDetected(
-        BuildCLSEntry(entry),
-        trace_buffer_->GetTotalCLS() + entry.score);
+  for (auto& element : entry.shifted_elements)
+    element.score_contribution =
+        total_weight > 0 ? score * element.score_contribution / total_weight
+                         : 0;
+  if (recording)
+    renderer_dom_recorder_->LayoutShift(entry);
+  if (legacy) {
+    double cumulative = CLSTotal(trace_buffer_->GetCLSEntries(), &entry);
+    GetFrontend()->layoutShiftDetected(BuildCLSEntry(entry), cumulative);
+    trace_buffer_->AddCLSEntry(std::move(entry));
   }
-
-  trace_buffer_->AddCLSEntry(std::move(entry));
 }
 
 void InspectorChromiumRLAgent::OnCompositorCommit(const cc::LayerTreeHost* layer_tree_host) {
@@ -504,10 +657,9 @@ void InspectorChromiumRLAgent::OnCompositorCommit(const cc::LayerTreeHost* layer
 }
 
 void InspectorChromiumRLAgent::Trace(Visitor* visitor) const {
+  visitor->Trace(renderer_dom_recorder_);
   visitor->Trace(inspected_frames_);
   visitor->Trace(trace_buffer_);
-  visitor->Trace(dom_diff_observer_);
-  visitor->Trace(dom_diff_delegate_);
   InspectorBaseAgent::Trace(visitor);
 }
 
@@ -566,28 +718,42 @@ std::unique_ptr<protocol::ChromiumRL::CLSEntry>
 InspectorChromiumRLAgent::BuildCLSEntry(const CLSTraceEntry& entry) {
   auto shifted_elements = std::make_unique<protocol::Array<protocol::ChromiumRL::ShiftedElement>>();
   for (const auto& element : entry.shifted_elements) {
-    shifted_elements->push_back(protocol::ChromiumRL::ShiftedElement::create()
-        .setNodeId(element.node_id)
-        .setSelectorPath(element.selector_path)
-        .setPreviousRect(protocol::DOM::Rect::create()
-            .setX(element.previous_rect.x())
-            .setY(element.previous_rect.y())
-            .setWidth(element.previous_rect.width())
-            .setHeight(element.previous_rect.height())
-            .build())
-        .setCurrentRect(protocol::DOM::Rect::create()
-            .setX(element.current_rect.x())
-            .setY(element.current_rect.y())
-            .setWidth(element.current_rect.width())
-            .setHeight(element.current_rect.height())
-            .build())
-        .setShiftDistance(element.shift_distance)
-        .setScoreContribution(element.score_contribution)
-        .build());
+    shifted_elements->push_back(
+        protocol::ChromiumRL::ShiftedElement::create()
+            .setNodeId(element.node_id)
+            .setSelectorPath(element.selector_path)
+            .setPreviousRect(protocol::DOM::Rect::create()
+                                 .setX(element.previous_rect.x())
+                                 .setY(element.previous_rect.y())
+                                 .setWidth(element.previous_rect.width())
+                                 .setHeight(element.previous_rect.height())
+                                 .build())
+            .setCurrentRect(protocol::DOM::Rect::create()
+                                .setX(element.current_rect.x())
+                                .setY(element.current_rect.y())
+                                .setWidth(element.current_rect.width())
+                                .setHeight(element.current_rect.height())
+                                .build())
+            .setShiftDistance(element.shift_distance)
+            .setScoreContribution(element.score_contribution)
+            .setScoreShare(
+                entry.score > 0 ? element.score_contribution / entry.score : 0)
+            .setShareMethod(
+                "impact-area-times-max-edge-distance; reported-elements-only")
+            .build());
   }
   
   auto sources = std::make_unique<protocol::Array<protocol::ChromiumRL::ShiftSource>>();
-  
+  for (const auto& element : entry.shifted_elements) {
+    sources->push_back(protocol::ChromiumRL::ShiftSource::create()
+                           .setSourceType("unknown")
+                           .setNodeId(element.node_id)
+                           .setDescription("Measured affected element: " +
+                                           element.selector_path +
+                                           "; root cause not inferred")
+                           .build());
+  }
+
   return protocol::ChromiumRL::CLSEntry::create()
       .setTimestamp(entry.timestamp)
       .setScore(entry.score)
@@ -783,148 +949,13 @@ String InspectorChromiumRLAgent::GetNodeFingerprint(Node* node) {
 // DOM Diff Implementation
 // ===========================================================================
 
-class InspectorChromiumRLAgent::DOMDiffObserver final
-    : public MutationObserver::Delegate {
- public:
-  explicit DOMDiffObserver(InspectorChromiumRLAgent* agent) : agent_(agent) {}
-
-  ExecutionContext* GetExecutionContext() const override {
-    return agent_->inspected_frames_->Root()->GetDocument()->GetExecutionContext();
-  }
-
-  void Deliver(const MutationRecordVector& records,
-               MutationObserver&) override {
-    agent_->OnDOMMutation(records);
-  }
-
-  void Trace(Visitor* visitor) const override {
-    visitor->Trace(agent_);
-    MutationObserver::Delegate::Trace(visitor);
-  }
-
- private:
-  Member<InspectorChromiumRLAgent> agent_;
-};
-
 protocol::Response InspectorChromiumRLAgent::startDOMDiff() {
-  if (dom_diff_observer_)
-    return protocol::Response::Success();
-
-  Document* document = inspected_frames_->Root()->GetDocument();
-  if (!document)
-    return protocol::Response::ServerError("No document to observe");
-
-  dom_diff_delegate_ = MakeGarbageCollected<DOMDiffObserver>(this);
-  dom_diff_observer_ = MutationObserver::Create(dom_diff_delegate_);
-
-  MutationObserverInit* init = MutationObserverInit::Create();
-  init->setChildList(true);
-  init->setAttributes(true);
-  init->setCharacterData(true);
-  init->setSubtree(true);
-  init->setAttributeOldValue(true);
-  init->setCharacterDataOldValue(true);
-
-  dom_diff_observer_->observe(document, init, ASSERT_NO_EXCEPTION);
-
-  return protocol::Response::Success();
+  return EnsureRendererDOMRecorder()->StartDiff();
 }
-
 protocol::Response InspectorChromiumRLAgent::stopDOMDiff() {
-  if (dom_diff_observer_) {
-    dom_diff_observer_->disconnect();
-    dom_diff_observer_ = nullptr;
-    dom_diff_delegate_ = nullptr;
-  }
+  if (renderer_dom_recorder_)
+    renderer_dom_recorder_->StopDiff();
   return protocol::Response::Success();
-}
-
-void InspectorChromiumRLAgent::OnDOMMutation(
-    const HeapVector<Member<MutationRecord>>& records) {
-  auto diff =
-      std::make_unique<protocol::Array<protocol::ChromiumRL::NodeDiff>>();
-
-  for (const auto& record : records) {
-    Node* target = record->target();
-    if (!target)
-      continue;
-
-    int node_id = IdentifiersFactory::IntIdForNode(target);
-    String selector_path = BuildSelectorPath(target);
-
-    auto node_diff = protocol::ChromiumRL::NodeDiff::create()
-                         .setNodeId(node_id)
-                         .setSelectorPath(selector_path)
-                         .build();
-
-    bool has_change = false;
-
-    if (record->type() == "attributes") {
-      if (auto* element = DynamicTo<Element>(target)) {
-        auto attr_mods = std::make_unique<
-            protocol::Array<protocol::ChromiumRL::AttributeModification>>();
-        attr_mods->push_back(
-            protocol::ChromiumRL::AttributeModification::create()
-                .setName(record->attributeName())
-                .setOldValue(record->oldValue())
-                .setNewValue(element->getAttribute(record->attributeName()))
-                .build());
-        node_diff->setAttributeModifications(std::move(attr_mods));
-        has_change = true;
-      }
-    } else if (record->type() == "characterData") {
-      node_diff->setCharacterDataModification(
-          protocol::ChromiumRL::CharacterDataModification::create()
-              .setOldData(record->oldValue())
-              .setNewData(target->nodeValue())
-              .build());
-      has_change = true;
-    } else if (record->type() == "childList") {
-      // Handle added nodes
-      if (record->addedNodes() && record->addedNodes()->length() > 0) {
-        auto added = std::make_unique<protocol::Array<protocol::ChromiumRL::NodeStructure>>();
-        for (unsigned i = 0; i < record->addedNodes()->length(); i++) {
-          Node* node = record->addedNodes()->item(i);
-          auto structure = protocol::ChromiumRL::NodeStructure::create()
-              .setNodeId(IdentifiersFactory::IntIdForNode(node))
-              .setNodeName(node->nodeName())
-              .build();
-          if (node->nodeValue()) {
-              structure->setNodeValue(node->nodeValue());
-          }
-          added->push_back(std::move(structure));
-        }
-        node_diff->setAddedNodes(std::move(added));
-        has_change = true;
-      }
-
-      // Handle removed nodes
-      if (record->removedNodes() && record->removedNodes()->length() > 0) {
-        auto removed = std::make_unique<protocol::Array<protocol::ChromiumRL::NodeStructure>>();
-        for (unsigned i = 0; i < record->removedNodes()->length(); i++) {
-          Node* node = record->removedNodes()->item(i);
-          auto structure = protocol::ChromiumRL::NodeStructure::create()
-              .setNodeId(IdentifiersFactory::IntIdForNode(node))
-              .setNodeName(node->nodeName())
-              .build();
-          if (node->nodeValue()) {
-              structure->setNodeValue(node->nodeValue());
-          }
-          removed->push_back(std::move(structure));
-        }
-        node_diff->setRemovedNodes(std::move(removed));
-        has_change = true;
-      }
-    }
-
-    if (has_change) {
-      diff->push_back(std::move(node_diff));
-    }
-  }
-
-  if (diff->size() > 0 && GetFrontend()) {
-    GetFrontend()->domDiffOccurred(std::move(diff));
-  }
 }
 
 // ===========================================================================
@@ -1296,6 +1327,30 @@ InspectorChromiumRLAgent::BuildLightweightNode(Node* node) {
   return rich_node;
 }
 
+namespace {
+gfx::RectF ReadNodeBounds(Node* node) {
+  return node->GetLayoutObject()
+             ? node->GetLayoutObject()->AbsoluteBoundingBoxRectF()
+             : gfx::RectF();
+}
+std::unique_ptr<protocol::Array<protocol::ChromiumRL::DOMAttribute>>
+ReadNodeAttributes(Element* element, unsigned cap, bool* truncated) {
+  auto attributes =
+      std::make_unique<protocol::Array<protocol::ChromiumRL::DOMAttribute>>();
+  for (const auto& attribute : element->Attributes()) {
+    if (attributes->size() == cap) {
+      *truncated = true;
+      break;
+    }
+    attributes->push_back(protocol::ChromiumRL::DOMAttribute::create()
+                              .setName(attribute.GetName().ToString())
+                              .setValue(attribute.Value())
+                              .build());
+  }
+  return attributes;
+}
+}  // namespace
+
 std::unique_ptr<protocol::ChromiumRL::RichNode> 
 InspectorChromiumRLAgent::BuildRichNode(Node* node) {
   int node_id = IdentifiersFactory::IntIdForNode(node);
@@ -1327,7 +1382,7 @@ InspectorChromiumRLAgent::BuildRichNode(Node* node) {
   auto bounds = protocol::DOM::Rect::create().setX(0).setY(0).setWidth(0).setHeight(0).build();
   bool is_in_viewport = false;
   if (node->GetLayoutObject()) {
-    gfx::RectF box = node->GetLayoutObject()->AbsoluteBoundingBoxRectF();
+    gfx::RectF box = ReadNodeBounds(node);
     bounds->setX(box.x());
     bounds->setY(box.y());
     bounds->setWidth(box.width());
@@ -1395,13 +1450,9 @@ InspectorChromiumRLAgent::BuildRichNode(Node* node) {
   }
 
   if (auto* element = DynamicTo<Element>(node)) {
-    auto attributes = std::make_unique<protocol::Array<protocol::ChromiumRL::DOMAttribute>>();
-    for (const auto& attr : element->Attributes()) {
-      attributes->push_back(protocol::ChromiumRL::DOMAttribute::create()
-        .setName(attr.GetName().ToString())
-        .setValue(attr.Value())
-        .build());
-    }
+    bool truncated = false;
+    auto attributes = ReadNodeAttributes(
+        element, std::numeric_limits<unsigned>::max(), &truncated);
     rich_node->setAttributes(std::move(attributes));
     
     if (const ComputedStyle* style = element->GetComputedStyle()) {
@@ -2459,6 +2510,9 @@ protocol::Response InspectorChromiumRLAgent::compareDOMState(
 }
 
 String InspectorChromiumRLAgent::GetAriaRoleName(Element* element) {
+  if (auto* cache = element->GetDocument().ExistingAXObjectCache();
+      cache && element->GetDocument().Lifecycle().GetState() >= DocumentLifecycle::kLayoutClean)
+    return cache->ComputedRoleForNode(element);
   // Check explicit ARIA role first
   const AtomicString& aria_role = element->FastGetAttribute(html_names::kRoleAttr);
   if (!aria_role.IsNull()) {
@@ -2620,10 +2674,10 @@ String InspectorChromiumRLAgent::GetAccessibleName(Node* node) {
     return String();
 
   Document& document = node->GetDocument();
-  if (AXObjectCache* cache = document.ExistingAXObjectCache()) {
+  if (AXObjectCache* cache = document.ExistingAXObjectCache();
+      cache && document.Lifecycle().GetState() >= DocumentLifecycle::kLayoutClean) {
     String computed_name = NormalizeTextContent(cache->ComputedNameForNode(node));
-    if (!computed_name.empty())
-      return computed_name;
+    return computed_name;
   }
 
   if (auto* element = DynamicTo<Element>(node)) {
@@ -3625,6 +3679,8 @@ protocol::Response InspectorChromiumRLAgent::captureStructuredSnapshot(
     }
   }
 
+  AXContext ax_context(*document, ui::kAXModeComplete);
+  document->UpdateStyleAndLayout(DocumentUpdateReason::kInspector);
   Node* root = document;
   if (root_selector.has_value() && !root_selector->empty()) {
     if (Element* el =
@@ -8002,4 +8058,2241 @@ protocol::Response InspectorChromiumRLAgent::getModelDOM(
 }
 
 
+}  // namespace blink
+
+// RendererDOM pure comparison and capture implementation.
+namespace blink::renderer_dom {
+namespace {
+std::string Key(const String& s) {
+  return s.Utf8();
+}
+String Text(const std::string& s) {
+  return String::FromUtf8(s);
+}
+std::string Escape(const String& s) {
+  std::string result;
+  for (char c : Key(s)) {
+    if (c == '~')
+      result += "~0";
+    else if (c == '/')
+      result += "~1";
+    else
+      result += c;
+  }
+  return result;
+}
+// Bound traversal before serializing or recursing over untrusted client data.
+bool ValidTree(Value* v, size_t& budget, int depth = 0) {
+  if (!v || depth > 64 || budget == 0)
+    return false;
+  --budget;
+  if (auto* d = Dict::cast(v)) {
+    if (d->size() > 20000)
+      return false;
+    for (size_t i = 0; i < d->size(); ++i) {
+      auto entry = d->at(i);
+      if (entry.first.length() > 4096 ||
+          !ValidTree(entry.second, budget, depth + 1))
+        return false;
+    }
+  } else if (auto* a = List::cast(v)) {
+    if (a->size() > 20000)
+      return false;
+    for (size_t i = 0; i < a->size(); ++i)
+      if (!ValidTree(a->at(i), budget, depth + 1))
+        return false;
+  } else if (v->type() == Value::TypeString) {
+    String s;
+    v->asString(&s);
+    if (s.length() > 1024 * 1024)
+      return false;
+  }
+  if (v->type() == Value::TypeDouble) {
+    double number;
+    if (!v->asDouble(&number) || !std::isfinite(number))
+      return false;
+  }
+  return true;
+}
+bool ValidEnvelope(Dict* d, const char* kind) {
+  return d && d->integerProperty("schemaVersion", -1) == kSchemaVersion &&
+         StringField(d, "kind") == kind && d->get("truncated") &&
+         d->get("truncated")->type() == Value::TypeBoolean;
+}
+bool ValidState(Dict* d) {
+  if (!ValidEnvelope(d, "state") || !d->getArray("nodes") ||
+      !d->getObject("document") || !d->getObject("coverage") ||
+      !d->getObject("limits"))
+    return false;
+  auto* nodes = d->getArray("nodes");
+  if (nodes->size() > 2000)
+    return false;
+  std::set<std::string> positions;
+  for (size_t i = 0; i < nodes->size(); ++i) {
+    auto* n = Dict::cast(nodes->at(i));
+    if (!n || StringField(n, "position").empty() ||
+        !positions.insert(Key(StringField(n, "position"))).second ||
+        !n->getArray("stableKeys") || !n->getObject("attributes") ||
+        StringField(n, "tag").empty() ||
+        n->getArray("stableKeys")->size() > 132)
+      return false;
+    std::set<std::string> unique_keys;
+    for (size_t j = 0; j < n->getArray("stableKeys")->size(); ++j) {
+      String key;
+      if (!n->getArray("stableKeys")->at(j)->asString(&key) ||
+          key.length() > 4096 || key.length() < 3 || key[0] < '0' ||
+          key[0] > '4' || key[1] != ':' || !unique_keys.insert(Key(key)).second)
+        return false;
+    }
+  }
+  return true;
+}
+bool ValidRecording(Dict* d) {
+  if (!ValidEnvelope(d, "recording") || !d->getArray("checkpoints") ||
+      !d->getArray("events") || !d->getObject("limits"))
+    return false;
+  auto* points = d->getArray("checkpoints");
+  if (points->size() > 128 || d->getArray("events")->size() > 10000)
+    return false;
+  for (size_t i = 0; i < points->size(); ++i) {
+    auto* point = Dict::cast(points->at(i));
+    if (!point || !ValidState(point->getObject("state")))
+      return false;
+  }
+  for (size_t i = 0; i < d->getArray("events")->size(); ++i)
+    if (!Dict::cast(d->getArray("events")->at(i)))
+      return false;
+  return true;
+}
+
+void StripRecordingIdentity(Value* value) {
+  if (auto* object = Dict::cast(value)) {
+    if (object->getArray("stableKeys")) {
+      object->remove("instance");
+      object->remove("parentInstance");
+    }
+    for (size_t i = 0; i < object->size(); ++i)
+      StripRecordingIdentity(object->at(i).second);
+  } else if (auto* list = List::cast(value)) {
+    for (size_t i = 0; i < list->size(); ++i)
+      StripRecordingIdentity(list->at(i));
+  }
+}
+
+class Comparison {
+ public:
+  explicit Comparison(int cap)
+      : cap_(cap), changes_(List::create()), matches_(List::create()) {}
+  void Change(const std::string& path, Value* a, Value* b, Dict* target = nullptr) {
+    bool timing = path.starts_with("/timing/") ||
+                  path.ends_with("/elapsedMs") ||
+                  path.ends_with("/startTime") || path.ends_with("/duration");
+    if (timing)
+      timing_changed_ = true;
+    else
+      changed_ = true;
+    if (changes_->size() >= static_cast<size_t>(cap_)) {
+      truncated_ = true;
+      return;
+    }
+    auto c = Dict::create();
+    c->setString("path", Text(path));
+    if (target) {
+      for (const char* field : {"location", "landmark"})
+        if (auto* location = target->getObject(field))
+          c->setObject(field, Dict::cast(location->clone()));
+    }
+    std::string category = timing ? "timing" : "structure";
+    for (const char* field :
+         {"document", "attributes", "styles", "geometry", "accessibility",
+          "form", "text", "shiftedElements"})
+      if (path.find(std::string("/") + field + "/") != std::string::npos ||
+          path.ends_with(std::string("/") + field))
+        category = field;
+    c->setString("category", Text(category));
+    c->setString("kind", !a ? "added" : !b ? "removed" : "changed");
+    if (a)
+      c->setValue("before", a->clone());
+    if (b)
+      c->setValue("after", b->clone());
+    size_t bytes = Bytes(*c);
+    if (bytes_ + bytes > kStateBytes / 2) {
+      truncated_ = true;
+      return;
+    }
+    bytes_ += bytes;
+    changes_->pushValue(std::move(c));
+  }
+  void Diff(Value* a, Value* b, const std::string& path, Dict* target = nullptr) {
+    if (!a && !b)
+      return;
+    if (a && b &&
+        (a->type() == Value::TypeInteger || a->type() == Value::TypeDouble) &&
+        (b->type() == Value::TypeInteger || b->type() == Value::TypeDouble)) {
+      double left = 0, right = 0;
+      if (a->asDouble(&left) && b->asDouble(&right) && left == right)
+        return;
+    }
+    if (!a || !b || a->type() != b->type()) {
+      Change(path, a, b, target);
+      return;
+    }
+    if (auto* x = Dict::cast(a)) {
+      auto* y = Dict::cast(b);
+      std::set<std::string> keys;
+      for (size_t i = 0; i < x->size(); ++i)
+        keys.insert(Key(x->at(i).first));
+      for (size_t i = 0; i < y->size(); ++i)
+        keys.insert(Key(y->at(i).first));
+      for (const auto& key : keys)
+        Diff(x->get(Text(key)), y->get(Text(key)),
+             path + "/" + Escape(Text(key)), target);
+    } else if (auto* array = List::cast(a)) {
+      auto* other = List::cast(b);
+      for (size_t i = 0; i < std::max(array->size(), other->size()); ++i)
+        Diff(i < array->size() ? array->at(i) : nullptr,
+             i < other->size() ? other->at(i) : nullptr,
+             path + "/" + std::to_string(i), target);
+    } else if (a->Serialize() != b->Serialize()) {
+      Change(path, a, b, target);
+    }
+  }
+  void State(Dict* a, Dict* b, const std::string& path, bool include_matches) {
+    incomplete_ |= a->booleanProperty("truncated", false) ||
+                   b->booleanProperty("truncated", false);
+    // Explicit omissions (e.g. remote frames) cannot establish equivalence.
+    incomplete_ |=
+        a->getObject("coverage")->booleanProperty("incomplete", true) ||
+        b->getObject("coverage")->booleanProperty("incomplete", true);
+    for (const char* field : {"document", "coverage", "limits"})
+      Diff(a->get(field), b->get(field), path + "/" + field);
+    auto* x = a->getArray("nodes");
+    auto* y = b->getArray("nodes");
+    std::vector<int> forward(x->size(), -1), reverse(y->size(), -1);
+    std::vector<std::string> reasons(x->size());
+    // Higher-priority unique keys consume matches before lower-priority keys.
+    // Duplicate identities never get paired by enumeration order.
+    for (int tier = 0; tier < 6; ++tier) {
+      std::map<std::string, std::vector<int>> left, right;
+      auto index = [&](List* nodes, const std::vector<int>& used, auto& map) {
+        for (size_t i = 0; i < nodes->size(); ++i) {
+          if (used[i] >= 0)
+            continue;
+          auto* n = Dict::cast(nodes->at(i));
+          auto add = [&](const std::string& key) {
+            map[key].push_back(static_cast<int>(i));
+          };
+          if (tier == 5) {
+            add(Key(StringField(n, "position")) + "|" +
+                Key(StringField(n, "tag")));
+          } else {
+            auto* keys = n->getArray("stableKeys");
+            for (size_t j = 0; j < keys->size(); ++j) {
+              String k;
+              keys->at(j)->asString(&k);
+              std::string key = Key(k);
+              if (key.starts_with(std::to_string(tier) + ":"))
+                add(key);
+            }
+          }
+        }
+      };
+      index(x, forward, left);
+      index(y, reverse, right);
+      for (auto& [key, l] : left) {
+        auto it = right.find(key);
+        if (it == right.end())
+          continue;
+        auto& r = it->second;
+        if (l.size() != 1 || r.size() != 1) {
+          ambiguous_ = true;
+          continue;
+        }
+        int i = l[0], j = r[0];
+        if (forward[i] >= 0 || reverse[j] >= 0)
+          continue;
+        forward[i] = j;
+        reverse[j] = i;
+        reasons[i] = key;
+      }
+    }
+    for (size_t i = 0; i < x->size(); ++i) {
+      auto* left = Dict::cast(x->at(i));
+      auto node_path = path + "/nodes/" + Escape(StringField(left, "position"));
+      if (forward[i] < 0) {
+        Change(node_path, left, nullptr, left);
+        continue;
+      }
+      auto* right = Dict::cast(y->at(forward[i]));
+      if (include_matches && matches_->size() < 2000) {
+        auto m = Dict::create();
+        m->setString("before", StringField(left, "position"));
+        m->setString("after", StringField(right, "position"));
+        m->setString("key", Text(reasons[i]));
+        size_t bytes = Bytes(*m);
+        if (match_bytes_ + bytes <= kStateBytes / 4) {
+          match_bytes_ += bytes;
+          matches_->pushValue(std::move(m));
+        } else
+          truncated_ = true;
+      }
+      auto l = Dict::cast(left->clone()), r = Dict::cast(right->clone());
+      // Keys are matching aids, not independent rendered changes.
+      l->remove("stableKeys");
+      r->remove("stableKeys");
+      Diff(l.get(), r.get(), node_path, right);
+    }
+    for (size_t i = 0; i < y->size(); ++i)
+      if (reverse[i] < 0)
+        Change(path + "/nodes/" +
+                   Escape(StringField(Dict::cast(y->at(i)), "position")),
+               nullptr, y->at(i), Dict::cast(y->at(i)));
+  }
+  void Events(List* before, List* after) {
+    std::vector<int> forward(before->size(), -1), reverse(after->size(), -1);
+    auto part = [](const String& value) {
+      std::string text = Key(value);
+      return std::to_string(text.size()) + ":" + text;
+    };
+    for (int tier = 0; tier < 6; ++tier) {
+      std::map<std::string, std::vector<int>> left, right;
+      std::map<std::string, std::set<std::string>> left_positions,
+          right_positions;
+      auto index = [&](List* events, const std::vector<int>& used,
+                       auto& indexed, auto& positions) {
+        for (size_t i = 0; i < events->size(); ++i) {
+          if (used[i] >= 0)
+            continue;
+          auto* event = Dict::cast(events->at(i));
+          std::string prefix = part(StringField(event, "type")) +
+                               part(StringField(event, "scope")) +
+                               part(StringField(event, "name"));
+          auto* target = event->getObject("target");
+          if (!target) {
+            if (tier == 0) {
+              auto* font = event->getObject("font");
+              std::string identity = prefix + part(StringField(event, "url")) +
+                                     part(StringField(event, "entryType")) +
+                                     part(StringField(font, "family"));
+              indexed[identity].push_back(static_cast<int>(i));
+            }
+            continue;
+          }
+          auto add = [&](const String& key) {
+            std::string identity = prefix + part(key);
+            indexed[identity].push_back(static_cast<int>(i));
+            positions[identity].insert(Key(StringField(target, "position")));
+          };
+          if (tier == 5) {
+            add(StringField(target, "position") + "|" +
+                StringField(target, "tag"));
+          } else if (auto* keys = target->getArray("stableKeys")) {
+            for (size_t j = 0; j < keys->size(); ++j) {
+              String key;
+              if (keys->at(j)->asString(&key) &&
+                  Key(key).starts_with(std::to_string(tier) + ":"))
+                add(key);
+            }
+          }
+        }
+      };
+      index(before, forward, left, left_positions);
+      index(after, reverse, right, right_positions);
+      for (const auto& [key, indices] : left) {
+        auto it = right.find(key);
+        if (it == right.end())
+          continue;
+        if (left_positions[key].size() > 1 || right_positions[key].size() > 1) {
+          ambiguous_ = true;
+          continue;
+        }
+        // Occurrence ordering is explicit; repeated assignments are never
+        // collapsed, even when a later assignment restores the original value.
+        size_t count = std::min(indices.size(), it->second.size());
+        for (size_t k = 0; k < count; ++k) {
+          int i = indices[k], j = it->second[k];
+          if (forward[i] >= 0 || reverse[j] >= 0)
+            continue;
+          forward[i] = j;
+          reverse[j] = i;
+          auto match = Dict::create();
+          match->setInteger("beforeEvent", i);
+          match->setInteger("afterEvent", j);
+          match->setInteger("identityTier", tier);
+          size_t bytes = Bytes(*match);
+          if (match_bytes_ + bytes <= kStateBytes / 4) {
+            match_bytes_ += bytes;
+            matches_->pushValue(std::move(match));
+          } else
+            truncated_ = true;
+        }
+      }
+    }
+    for (size_t i = 0; i < before->size(); ++i) {
+      auto* l = Dict::cast(before->at(i));
+      std::string path = "/events/" + std::to_string(i);
+      if (forward[i] < 0) {
+        Change(path, l, nullptr, l->getObject("target"));
+        continue;
+      }
+      auto* r = Dict::cast(after->at(forward[i]));
+      auto lc = Dict::cast(l->clone()), rc = Dict::cast(r->clone());
+      StripRecordingIdentity(lc.get());
+      StripRecordingIdentity(rc.get());
+      Diff(lc->get("elapsedMs"), rc->get("elapsedMs"), "/timing" + path);
+      lc->remove("elapsedMs");
+      rc->remove("elapsedMs");
+      for (auto* event : {lc.get(), rc.get()})
+        if (auto* target = event->getObject("target"))
+          target->remove("stableKeys");
+      Diff(lc.get(), rc.get(), path, r->getObject("target"));
+      if (forward[i] != static_cast<int>(i)) {
+        auto from = protocol::FundamentalValue::create(static_cast<int>(i));
+        auto to = protocol::FundamentalValue::create(forward[i]);
+        Change("/eventOrder/" + std::to_string(i), from.get(), to.get());
+      }
+    }
+    for (size_t j = 0; j < after->size(); ++j)
+      if (reverse[j] < 0)
+        Change("/events/added/" + std::to_string(j), nullptr, after->at(j),
+               Dict::cast(after->at(j))->getObject("target"));
+  }
+  void Recording(Dict* a, Dict* b) {
+    incomplete_ |= a->booleanProperty("truncated", false) ||
+                   b->booleanProperty("truncated", false) ||
+                   a->booleanProperty("active", true) ||
+                   b->booleanProperty("active", true);
+    Diff(a->get("limits"), b->get("limits"), "/limits");
+    Diff(a->get("durationMs"), b->get("durationMs"), "/timing/durationMs");
+    Events(a->getArray("events"), b->getArray("events"));
+    // Checkpoints retain their explicit sampling sequence; do not infer that
+    // observations at different times represent the same page lifecycle phase.
+    auto* x = a->getArray("checkpoints");
+    auto* y = b->getArray("checkpoints");
+    for (size_t i = 0; i < std::max(x->size(), y->size()); ++i) {
+      auto* l = i < x->size() ? Dict::cast(x->at(i)) : nullptr;
+      auto* r = i < y->size() ? Dict::cast(y->at(i)) : nullptr;
+      std::string p = "/checkpoints/" + std::to_string(i);
+      if (!l || !r) {
+        Change(p, l, r);
+        continue;
+      }
+      Diff(l->get("elapsedMs"), r->get("elapsedMs"), "/timing" + p);
+      State(l->getObject("state"), r->getObject("state"), p + "/state", false);
+    }
+  }
+  std::unique_ptr<Dict> Finish(bool recording) {
+    auto out = Envelope("comparison");
+    out->setBoolean("truncated", truncated_);
+    out->setBoolean("contentChanged", changed_);
+    out->setBoolean("timingChanged", timing_changed_);
+    out->setBoolean("incomplete", incomplete_ || truncated_ || ambiguous_);
+    out->setBoolean("ambiguousMatching", ambiguous_);
+    out->setString("status", (changed_ || timing_changed_) ? "changed"
+                             : (incomplete_ || truncated_ || ambiguous_)
+                                 ? "inconclusive"
+                                 : "equal");
+    out->setString("alignment",
+                   recording
+                       ? "stable-target-event-occurrence/checkpoint-sequence"
+                       : "stable-keys-then-position");
+    out->setArray("changes", std::move(changes_));
+    out->setArray("matches", std::move(matches_));
+    return out;
+  }
+
+ private:
+  int cap_;
+  bool timing_changed_ = false;
+  bool changed_ = false, truncated_ = false, incomplete_ = false,
+       ambiguous_ = false;
+  size_t bytes_ = 0, match_bytes_ = 0;
+  std::unique_ptr<List> changes_, matches_;
+};
+}  // namespace
+
+String StringField(const Dict* d, const char* key) {
+  String result;
+  if (d)
+    d->getString(key, &result);
+  return result;
+}
+namespace {
+size_t StringBytes(const String& text) {
+  size_t bytes = 2;
+  for (unsigned i = 0; i < text.length(); ++i) {
+    auto c = text[i];
+    bytes += c < 32 || c > 126 ? 6 : c == '"' || c == '\\' ? 2 : 1;
+  }
+  return bytes;
+}
+}  // namespace
+size_t Bytes(const Value& value) {
+  // Conservative JSON wire size (including escaping), not CBOR allocation size.
+  auto* v = const_cast<Value*>(&value);
+  if (auto* d = Dict::cast(v)) {
+    size_t bytes = 2;
+    for (size_t i = 0; i < d->size(); ++i) {
+      auto entry = d->at(i);
+      bytes += StringBytes(entry.first) + 2 + Bytes(*entry.second);
+    }
+    return bytes;
+  }
+  if (auto* a = List::cast(v)) {
+    size_t bytes = 2;
+    for (size_t i = 0; i < a->size(); ++i)
+      bytes += 1 + Bytes(*a->at(i));
+    return bytes;
+  }
+  String text;
+  if (v->asString(&text))
+    return StringBytes(text);
+  return 32;
+}
+std::unique_ptr<Dict> Envelope(const char* kind) {
+  auto d = Dict::create();
+  d->setInteger("schemaVersion", kSchemaVersion);
+  d->setString("kind", kind);
+  d->setBoolean("truncated", false);
+  return d;
+}
+namespace {
+String CompactText(const String& value, bool* truncated) {
+  if (value.length() <= 256)
+    return value;
+  *truncated = true;
+  return value.substr(0, 256);
+}
+String TargetKey(Dict* target) {
+  String key;
+  if (target) {
+    if (auto* keys = target->getArray("stableKeys")) {
+      for (size_t i = 0; i < keys->size(); ++i) {
+        String candidate;
+        if (keys->at(i)->asString(&candidate) &&
+            (key.empty() || candidate.Utf8() < key.Utf8()))
+          key = candidate;
+      }
+    }
+    if (key.empty())
+      key = StringField(target, "position") + "|" + StringField(target, "tag");
+  }
+  return key;
+}
+std::unique_ptr<Dict> CompactTarget(Dict* target, bool* truncated) {
+  auto out = Dict::create();
+  for (const char* field : {"position", "tag", "text"})
+    out->setString(field, CompactText(StringField(target, field), truncated));
+  out->setString("key", CompactText(TargetKey(target), truncated));
+  if (target) {
+    for (const char* field : {"location", "landmark"}) {
+      if (auto* input = target->getObject(field)) {
+        auto location = Dict::create();
+        for (const char* name : {"key", "kind", "tag", "id", "label", "position"})
+          location->setString(name, CompactText(StringField(input, name), truncated));
+        out->setObject(field, std::move(location));
+      }
+    }
+  }
+  if (target && target->getObject("attributes"))
+    out->setString(
+        "id", CompactText(StringField(target->getObject("attributes"), "id"),
+                          truncated));
+  return out;
+}
+std::unique_ptr<Dict> CompactSource(Dict* source, bool* truncated) {
+  auto out = Dict::create();
+  out->setBoolean("available", source && source->booleanProperty("available", false));
+  for (const char* field : {"url", "function", "reason"})
+    out->setString(field, CompactText(StringField(source, field), truncated));
+  for (const char* field : {"line", "column"})
+    out->setInteger(field, source ? source->integerProperty(field, -1) : -1);
+  return out;
+}
+
+bool SameInitiator(Dict* a, Dict* b) {
+  return a && b && a->booleanProperty("available", false) &&
+         b->booleanProperty("available", false) &&
+         StringField(a, "url") == StringField(b, "url") &&
+         StringField(a, "function") == StringField(b, "function") &&
+         a->integerProperty("line", -1) == b->integerProperty("line", -1) &&
+         a->integerProperty("column", -1) == b->integerProperty("column", -1);
+}
+
+void UndoProvenance(Dict* effect, Dict* first, Dict* last, bool* truncated) {
+  auto* a = first->getObject("source");
+  auto* b = last->getObject("source");
+  bool known = a && b && a->booleanProperty("available", false) &&
+               b->booleanProperty("available", false);
+  effect->setObject("initiatorA", CompactSource(a, truncated));
+  effect->setObject("initiatorB", CompactSource(b, truncated));
+  effect->setBoolean("attributionComplete", known);
+  if (known)
+    effect->setBoolean("differentInitiators", !SameInitiator(a, b));
+  double started = 0, ended = 0;
+  first->getDouble("elapsedMs", &started);
+  last->getDouble("elapsedMs", &ended);
+  effect->setDouble("startedAtMs", started);
+  effect->setDouble("undoneAtMs", ended);
+}
+
+// Local instance tokens distinguish replacement from reparenting. They are never
+// used to align the two versions. Without such evidence, do not infer removal
+// from a reused position or a duplicated semantic key.
+void StructuralEffects(Dict* recording, List* undone, size_t* bytes,
+                       bool* truncated) {
+  auto* events = recording->getArray("events");
+  auto nodes = [&](Dict* event) {
+    std::vector<Dict*> result;
+    if (auto* target = event->getObject("target"))
+      result.push_back(target);
+    if (auto* subtree = event->getArray("subtree")) {
+      if (subtree->size() > 64)
+        *truncated = true;
+      for (size_t j = 0; j < std::min<size_t>(subtree->size(), 64); ++j)
+        if (auto* node = Dict::cast(subtree->at(j)))
+          result.push_back(node);
+    }
+    return result;
+  };
+  std::map<int, size_t> last_insertion;
+  std::map<int, std::vector<size_t>> child_insertions;
+  for (size_t i = 0; i < events->size(); ++i) {
+    auto* event = Dict::cast(events->at(i));
+    if (StringField(event, "type") != "insert")
+      continue;
+    for (auto* node : nodes(event)) {
+      int instance = node->integerProperty("instance", 0);
+      if (!instance)
+        continue;
+      if (last_insertion.size() >= 8192 && !last_insertion.contains(instance)) {
+        *truncated = true;
+        continue;
+      }
+      last_insertion[instance] = i;
+    }
+    if (auto* target = event->getObject("target")) {
+      int parent = target->integerProperty("parentInstance", 0);
+      if (parent)
+        child_insertions[parent].push_back(i);
+    }
+  }
+  struct Origin { size_t event; Dict* target; };
+  std::map<std::pair<int, std::string>, Origin> pending;
+  auto remember = [&](Dict* target, const std::string& field, size_t index) {
+    int instance = target->integerProperty("instance", 0);
+    if (!instance)
+      return;
+    if (pending.size() >= 8192) {
+      *truncated = true;
+      return;
+    }
+    pending.try_emplace({instance, field}, Origin{index, target});
+  };
+  for (size_t i = 0; i < events->size(); ++i) {
+    auto* event = Dict::cast(events->at(i));
+    auto* target = event->getObject("target");
+    String type = StringField(event, "type");
+    if (!target)
+      continue;
+    if (type == "insert") {
+      for (auto* node : nodes(event))
+        remember(node, "", i);
+    } else if ((type == "attribute" || type == "text") && event->get("oldValue")) {
+      std::string field = Key(type) + ":" + Key(StringField(event, "name"));
+      remember(target, field, i);
+      auto found = pending.find({target->integerProperty("instance", 0), field});
+      if (found != pending.end()) {
+        auto* first = Dict::cast(events->at(found->second.event));
+        if (StringField(event, "value") == StringField(first, "oldValue") &&
+            event->booleanProperty("valueWasNull", false) ==
+                first->booleanProperty("oldValueWasNull", false))
+          pending.erase(found);
+      }
+    } else if (type == "remove") {
+      for (auto* removed : nodes(event)) {
+        int instance = removed->integerProperty("instance", 0);
+        if (!instance)
+          continue;
+        auto reinsertion = last_insertion.find(instance);
+        // Moving this exact object preserves its effects. A replacement object
+        // with the same ID/key has a different local instance token.
+        if (reinsertion != last_insertion.end() && reinsertion->second > i)
+          continue;
+        auto it = pending.lower_bound({instance, ""});
+        while (it != pending.end() && it->first.first == instance) {
+          auto origin = it->second;
+          std::string field = it->first.second;
+          it = pending.erase(it);
+          auto* first = Dict::cast(events->at(origin.event));
+          if (SameInitiator(first->getObject("source"), event->getObject("source")))
+            continue;
+          auto effect = Dict::create();
+          effect->setString("kind", field.empty() ? "inserted-node-removed" : "modified-node-removed");
+          effect->setString("field", CompactText(Text(field), truncated));
+          effect->setObject("target", CompactTarget(origin.target, truncated));
+          effect->setObject("removedBy", CompactTarget(target, truncated));
+          effect->setBoolean("ancestorRemoved", target->integerProperty("instance", 0) != instance);
+          effect->setInteger("firstEvent", static_cast<int>(origin.event));
+          effect->setInteger("undoneAtEvent", static_cast<int>(i));
+          UndoProvenance(effect.get(), first, event, truncated);
+          // A subsequent insertion under the same parent by the removing script
+          // is observed replacement evidence; no framework or timing heuristic.
+          int parent = removed->integerProperty("parentInstance", 0);
+          auto replacements = child_insertions.find(parent);
+          if (replacements != child_insertions.end()) {
+            auto next = std::upper_bound(replacements->second.begin(), replacements->second.end(), i);
+            if (next != replacements->second.end()) {
+              auto* replacement = Dict::cast(events->at(*next));
+              auto* a = event->getObject("source");
+              auto* b = replacement->getObject("source");
+              if (a && b && a->booleanProperty("available", false) &&
+                  b->booleanProperty("available", false) &&
+                  StringField(a, "url") == StringField(b, "url") &&
+                  StringField(a, "function") == StringField(b, "function")) {
+                effect->setString("kind", field.empty() ? "inserted-content-replaced" : "modified-content-replaced");
+                effect->setInteger("replacementEvent", static_cast<int>(*next));
+              }
+            }
+          }
+          size_t size = Bytes(*effect);
+          if (undone->size() < 64 && *bytes + size <= 256 * 1024) {
+            *bytes += size;
+            undone->pushValue(std::move(effect));
+          } else {
+            *truncated = true;
+          }
+        }
+      }
+    }
+  }
+}
+
+// Derive bounded evidence before discarding the full recording. An unchanged
+// restoration event can be absent from the ordinary diff, so diff-only analysis
+// cannot reliably reconstruct undone effects.
+std::unique_ptr<Dict> RecordingEvidence(Dict* recording) {
+  bool truncated = false;
+  auto undone = List::create(), shifts = List::create();
+  size_t undone_bytes = 0, ranked_bytes = 0;
+  struct Cycle {
+    String initial, transient;
+    bool initial_null = false;
+    bool changed = false;
+    size_t first = 0;
+  };
+  std::map<std::string, Cycle> cycles;
+  std::vector<std::pair<double, std::unique_ptr<Dict>>> ranked;
+  auto* events = recording->getArray("events");
+  for (size_t i = 0; i < events->size(); ++i) {
+    auto* event = Dict::cast(events->at(i));
+    String type = StringField(event, "type");
+    auto* target = event->getObject("target");
+    if ((type == "attribute" || type == "text") && target &&
+        event->get("oldValue")) {
+      String field = StringField(event, "name");
+      std::string identity =
+          Key(type == "text" || field == "id" || field == "class" ||
+                      field.starts_with("data-")
+                  ? StringField(target, "position") + "|" +
+                        StringField(target, "tag")
+                  : TargetKey(target));
+      identity = std::to_string(identity.size()) + ":" + identity + Key(type) +
+                 ":" + Key(StringField(event, "name"));
+      auto [it, added] = cycles.try_emplace(identity);
+      auto& cycle = it->second;
+      String old = StringField(event, "oldValue"),
+             value = StringField(event, "value");
+      bool old_null = event->booleanProperty("oldValueWasNull", false);
+      bool value_null = event->booleanProperty("valueWasNull", false);
+      if (added) {
+        cycle.initial = old;
+        cycle.initial_null = old_null;
+        cycle.first = i;
+      }
+      if (value != cycle.initial || value_null != cycle.initial_null) {
+        cycle.changed = true;
+        cycle.transient = value;
+      } else if (cycle.changed) {
+        if (undone->size() < 64) {
+          auto effect = Dict::create();
+          effect->setObject("target", CompactTarget(target, &truncated));
+          effect->setString(
+              "field", CompactText(StringField(event, "name"), &truncated));
+          effect->setString("initialValue",
+                            CompactText(cycle.initial, &truncated));
+          effect->setBoolean("initialValueWasNull", cycle.initial_null);
+          effect->setString("transientValue",
+                            CompactText(cycle.transient, &truncated));
+          effect->setInteger("firstEvent", static_cast<int>(cycle.first));
+          effect->setInteger("restoredAtEvent", static_cast<int>(i));
+          effect->setString("kind", "value-restored");
+          UndoProvenance(effect.get(), Dict::cast(events->at(cycle.first)), event,
+                         &truncated);
+          size_t size = Bytes(*effect);
+          if (undone_bytes + size <= 256 * 1024) {
+            undone_bytes += size;
+            undone->pushValue(std::move(effect));
+          } else
+            truncated = true;
+        } else
+          truncated = true;
+        cycles.erase(it);
+      }
+    }
+    if (type == "layoutShift") {
+      if (auto* elements = event->getArray("shiftedElements")) {
+        for (size_t j = 0; j < elements->size(); ++j) {
+          auto* element = Dict::cast(elements->at(j));
+          if (!element)
+            continue;
+          double score = 0;
+          element->getDouble("scoreContribution", &score);
+          auto item = Dict::create();
+          item->setObject("target", CompactTarget(element->getObject("target"),
+                                                  &truncated));
+          item->setDouble("scoreContribution", score);
+          item->setBoolean("hadRecentInput",
+                           event->booleanProperty("hadRecentInput", false));
+          item->setInteger("event", static_cast<int>(i));
+          item->setString("attribution",
+                          "measured-affected-element; root-cause-unknown");
+          ranked_bytes += Bytes(*item);
+          ranked.emplace_back(score, std::move(item));
+          std::stable_sort(
+              ranked.begin(), ranked.end(),
+              [](const auto& a, const auto& b) { return a.first > b.first; });
+          while (ranked.size() > 64 || ranked_bytes > 256 * 1024) {
+            ranked_bytes -= Bytes(*ranked.back().second);
+            ranked.pop_back();
+            truncated = true;
+          }
+        }
+      }
+    }
+  }
+  StructuralEffects(recording, undone.get(), &undone_bytes, &truncated);
+  for (auto& item : ranked)
+    shifts->pushValue(std::move(item.second));
+  auto out = Dict::create();
+  out->setArray("undoneEffects", std::move(undone));
+  out->setArray("layoutShifts", std::move(shifts));
+  out->setBoolean("truncated", truncated);
+  out->setString("undoneCoverage",
+                 "observed-value-restoration-and-structural-removal; local-instance-evidence; attribution-may-be-unavailable");
+  return out;
+}
+}  // namespace
+
+protocol::Response Compare(Dict* before,
+                           Dict* after,
+                           int max_changes,
+                           bool recording,
+                           std::unique_ptr<Dict>* result) {
+  if (max_changes < 1 || max_changes > 10000)
+    return protocol::Response::InvalidParams("maxChanges must be 1..10000");
+  for (auto* d : {before, after}) {
+    size_t budget = 2000000;
+    if (!ValidTree(d, budget) ||
+        Bytes(*d) > (recording ? kRecordingBytes : kStateBytes) ||
+        !(recording ? ValidRecording(d) : ValidState(d)))
+      return protocol::Response::InvalidParams(
+          "Invalid RendererDOM schema, shape, depth or size");
+  }
+  Comparison comparison(max_changes);
+  if (recording)
+    comparison.Recording(before, after);
+  else
+    comparison.State(before, after, "", true);
+  *result = comparison.Finish(recording);
+  if (recording) {
+    auto evidence = Dict::create();
+    evidence->setObject("before", RecordingEvidence(before));
+    evidence->setObject("after", RecordingEvidence(after));
+    (*result)->setObject("recordingEvidence", std::move(evidence));
+  }
+  return protocol::Response::Success();
+}
+protocol::Response Model(Dict* diff,
+                         List* errors,
+                         int max_items,
+                         std::unique_ptr<Dict>* result) {
+  size_t budget = 2000000;
+  if (max_items < 1 || max_items > 100 || !ValidTree(diff, budget) ||
+      Bytes(*diff) > kStateBytes || !ValidEnvelope(diff, "comparison") ||
+      !diff->getArray("changes") || diff->getArray("changes")->size() > 10000)
+    return protocol::Response::InvalidParams(
+        "Invalid comparison or model budget");
+  if (errors && (!ValidTree(errors, budget) || errors->size() > 1000 ||
+                 Bytes(*errors) > 1024 * 1024))
+    return protocol::Response::InvalidParams("Invalid client error evidence");
+  bool truncated = diff->booleanProperty("truncated", false);
+  auto model = Envelope("model");
+  auto sections = List::create();
+  size_t bytes = 4096;
+  auto section = [&](const char* name, std::unique_ptr<List> items, int total) {
+    auto out = Dict::create();
+    out->setString("kind", name);
+    out->setInteger("count", total);
+    out->setBoolean("countsComplete", !truncated);
+    auto bounded = List::create();
+    for (size_t i = 0; i < items->size(); ++i) {
+      size_t size = Bytes(*items->at(i));
+      if (bounded->size() >= static_cast<size_t>(max_items) ||
+          bytes + size > 64 * 1024 - 4096) {
+        truncated = true;
+        continue;
+      }
+      bytes += size;
+      bounded->pushValue(items->at(i)->clone());
+    }
+    out->setArray("items", std::move(bounded));
+    sections->pushValue(std::move(out));
+  };
+  std::map<std::string, int> areas;
+  auto missing = List::create();
+  auto* changes = diff->getArray("changes");
+  for (size_t i = 0; i < changes->size(); ++i) {
+    auto* change = Dict::cast(changes->at(i));
+    if (!change)
+      return protocol::Response::InvalidParams("Invalid change entry");
+    String category = StringField(change, "category");
+    ++areas[Key(category)];
+    if (StringField(change, "kind") == "removed") {
+      auto item = Dict::create();
+      item->setString("path",
+                      CompactText(StringField(change, "path"), &truncated));
+      item->setString("category", CompactText(category, &truncated));
+      if (auto* node = change->getObject("before"); node && node->get("tag"))
+        item->setObject("target", CompactTarget(node, &truncated));
+      missing->pushValue(std::move(item));
+    }
+  }
+  struct Place {
+    Dict* descriptor = nullptr;
+    int count = 0;
+  };
+  std::map<std::string, Place> places;
+  std::map<std::string, std::map<std::string, int>> place_categories;
+  for (size_t i = 0; i < changes->size(); ++i) {
+    auto* change = Dict::cast(changes->at(i));
+    auto* location = change->getObject("location");
+    String key = location ? StringField(location, "key") : String("unlocated");
+    auto& place = places[Key(key)];
+    place.descriptor = location;
+    ++place.count;
+    ++place_categories[Key(key)][Key(StringField(change, "category"))];
+  }
+  auto locations = List::create();
+  for (const auto& [key, place] : places) {
+    auto item = Dict::create();
+    for (const char* field : {"key", "kind", "tag", "id", "label", "position"})
+      item->setString(field, CompactText(StringField(place.descriptor, field), &truncated));
+    if (!place.descriptor) {
+      item->setString("key", "unlocated");
+      item->setString("kind", "unlocated");
+      item->setString("label", "No node location supplied");
+    }
+    item->setInteger("count", place.count);
+    auto categories = Dict::create();
+    for (const auto& [category, count] : place_categories[key])
+      categories->setInteger(CompactText(Text(category), &truncated), count);
+    item->setObject("categories", std::move(categories));
+    locations->pushValue(std::move(item));
+  }
+  auto changed = List::create();
+  for (const auto& [area, count] : areas) {
+    auto item = Dict::create();
+    item->setString("area", CompactText(Text(area), &truncated));
+    item->setInteger("count", count);
+    changed->pushValue(std::move(item));
+  }
+  section("changed-areas", std::move(changed),
+          static_cast<int>(changes->size()));
+  section("changed-locations", std::move(locations),
+          static_cast<int>(changes->size()));
+  int missing_count = static_cast<int>(missing->size());
+  section("missing-items", std::move(missing), missing_count);
+  auto undone = List::create(), shifts = List::create();
+  if (auto* evidence = diff->getObject("recordingEvidence")) {
+    for (const char* side : {"before", "after"}) {
+      auto* data = evidence->getObject(side);
+      if (!data)
+        continue;
+      truncated |= data->booleanProperty("truncated", false);
+      for (const char* field : {"undoneEffects", "layoutShifts"}) {
+        auto* list = data->getArray(field);
+        if (!list)
+          continue;
+        if (list->size() > 64)
+          return protocol::Response::InvalidParams(
+              "Invalid recording evidence");
+        for (size_t i = 0; i < list->size(); ++i) {
+          auto* item = Dict::cast(list->at(i));
+          if (!item)
+            return protocol::Response::InvalidParams(
+                "Invalid recording evidence item");
+          auto copy = Dict::cast(item->clone());
+          copy->setString("version", side);
+          (String(field) == "undoneEffects" ? undone : shifts)
+              ->pushValue(std::move(copy));
+        }
+      }
+    }
+  }
+  int count = static_cast<int>(undone->size());
+  section("undone-effects", std::move(undone), count);
+  auto new_errors = List::create();
+  if (errors) {
+    for (size_t i = 0; i < errors->size(); ++i) {
+      auto* error = Dict::cast(errors->at(i));
+      if (!error)
+        return protocol::Response::InvalidParams(
+            "Client errors must be objects");
+      auto item = Dict::create();
+      for (const char* field : {"message", "url", "kind"})
+        item->setString(field,
+                        CompactText(StringField(error, field), &truncated));
+      item->setString("evidenceOrigin", "client-supplied");
+      item->setInteger("line", error->integerProperty("line", -1));
+      new_errors->pushValue(std::move(item));
+    }
+  }
+  count = static_cast<int>(new_errors->size());
+  section("new-errors", std::move(new_errors), count);
+  std::vector<Dict*> ranked;
+  for (size_t i = 0; i < shifts->size(); ++i)
+    ranked.push_back(Dict::cast(shifts->at(i)));
+  std::stable_sort(ranked.begin(), ranked.end(), [](Dict* a, Dict* b) {
+    double left = 0, right = 0;
+    a->getDouble("scoreContribution", &left);
+    b->getDouble("scoreContribution", &right);
+    return left > right;
+  });
+  auto top = List::create();
+  for (auto* item : ranked)
+    top->pushValue(item->clone());
+  count = static_cast<int>(top->size());
+  section("top-layout-shift-causes", std::move(top), count);
+  model->setArray("sections", std::move(sections));
+  model->setString("status",
+                   CompactText(StringField(diff, "status"), &truncated));
+  model->setBoolean("truncated", truncated);
+  model->setBoolean("incomplete",
+                    truncated || diff->booleanProperty("incomplete", true));
+  *result = std::move(model);
+  return protocol::Response::Success();
+}
+}  // namespace blink::renderer_dom
+
+namespace blink {
+using renderer_dom::Dict;
+using renderer_dom::List;
+using renderer_dom::StringField;
+namespace {
+constexpr unsigned kStringChars = 1024;
+constexpr unsigned kAttributes = 128;
+constexpr unsigned kStyles = 1024;
+constexpr unsigned kFonts = 1024;
+String Cap(const String& s, bool* truncated, unsigned cap = kStringChars) {
+  if (s.length() <= cap)
+    return s;
+  *truncated = true;
+  return s.substr(0, cap);
+}
+String Hash(const String& s) {
+  auto hash = base::SHA1HashString(s.Utf8());
+  return String::FromUtf8(base::HexEncode(hash));
+}
+std::unique_ptr<Dict> Rect(double x, double y, double width, double height) {
+  auto d = Dict::create();
+  d->setDouble("x", x);
+  d->setDouble("y", y);
+  d->setDouble("width", width);
+  d->setDouble("height", height);
+  return d;
+}
+std::unique_ptr<Dict> Source(SourceLocation* source, bool* truncated) {
+  auto d = Dict::create();
+  d->setBoolean("available", source && !source->IsUnknown());
+  if (source && !source->IsUnknown()) {
+    d->setString("url", Cap(source->Url(), truncated));
+    // SourceLocation is one-based. Expose CDP-style zero-based coordinates.
+    d->setInteger("line", source->LineNumber() ? source->LineNumber() - 1 : -1);
+    d->setInteger("column",
+                  source->ColumnNumber() ? source->ColumnNumber() - 1 : -1);
+    d->setString("function", Cap(source->Function(), truncated));
+  }
+  return d;
+}
+std::unique_ptr<Dict> FontInfo(const FontFace* face, bool* truncated) {
+  auto font = Dict::create();
+  font->setString("family", Cap(face->family(), truncated));
+  font->setString("style", Cap(face->style(), truncated));
+  font->setString("weight", Cap(face->weight(), truncated));
+  font->setString("stretch", Cap(face->stretch(), truncated));
+  font->setString("display", Cap(face->display(), truncated));
+  font->setString("status", face->status().AsString());
+  return font;
+}
+}  // namespace
+
+RendererDOMRecorder::RendererDOMRecorder(InspectorChromiumRLAgent* owner)
+    : inspected_frames_(owner->inspected_frames_), chromiumrl_agent_(owner) {}
+
+void RendererDOMRecorder::Trace(Visitor* visitor) const {
+  visitor->Trace(inspected_frames_);
+  visitor->Trace(chromiumrl_agent_);
+  visitor->Trace(dom_agent_);
+  visitor->Trace(recording_document_);
+}
+
+namespace {
+String PositionWithinDocument(Node* node) {
+  std::vector<String> parts;
+  Node* cursor = node;
+  unsigned budget = 8192;
+  while (cursor && !cursor->IsDocumentNode() && parts.size() < 64) {
+    if (auto* shadow = DynamicTo<ShadowRoot>(cursor)) {
+      parts.push_back("shadow");
+      cursor = &shadow->host();
+      continue;
+    }
+    unsigned index = 0;
+    for (Node* previous = cursor->previousSibling(); previous;
+         previous = previous->previousSibling()) {
+      if (!--budget)
+        return "position-unavailable";
+      ++index;
+    }
+    parts.push_back(String::Number(index));
+    cursor = cursor->parentNode();
+  }
+  if (cursor && !cursor->IsDocumentNode())
+    return "position-unavailable";
+  StringBuilder path;
+  for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
+    path.Append('/');
+    path.Append(*it);
+  }
+  return path.ToString();
+}
+}  // namespace
+String RendererDOMRecorder::FrameScope(LocalFrame* frame) {
+  std::vector<String> owners;
+  while (frame && frame != inspected_frames_->Root()) {
+    if (owners.size() >= 32)
+      return "frame-unavailable";
+    auto* owner = frame->DeprecatedLocalOwner();
+    if (!owner)
+      return "frame-unavailable";
+    owners.push_back(PositionWithinDocument(owner));
+    frame = owner->GetDocument().GetFrame();
+  }
+  StringBuilder scope;
+  scope.Append("main");
+  for (auto it = owners.rbegin(); it != owners.rend(); ++it) {
+    scope.Append(*it);
+    scope.Append("/frame");
+  }
+  if (scope.length() > 2048)
+    return "frame-unavailable";
+  return scope.ToString();
+}
+String RendererDOMRecorder::Position(Node* node) {
+  if (!node)
+    return String();
+  return FrameScope(node->GetDocument().GetFrame()) +
+         PositionWithinDocument(node);
+}
+String RendererDOMRecorder::IdentityScope(Node* node) {
+  if (auto* shadow = node->ContainingShadowRoot())
+    return Position(shadow);
+  return FrameScope(node->GetDocument().GetFrame());
+}
+
+std::unique_ptr<Dict> RendererDOMRecorder::Location(Node* node,
+                                                  bool landmark_only,
+                                                  bool* truncated) {
+  auto location = Dict::create();
+  Node* cursor = node;
+  for (unsigned depth = 0; cursor && depth < 64; ++depth) {
+    if (auto* element = DynamicTo<Element>(cursor)) {
+      String tag = element->localName();
+      String role = element->getAttribute(html_names::kRoleAttr);
+      bool landmark = tag == "header" || tag == "nav" || tag == "main" ||
+                      tag == "footer" || tag == "aside" || tag == "section" ||
+                      role == "banner" || role == "navigation" ||
+                      role == "main" || role == "contentinfo" ||
+                      role == "complementary" || role == "region";
+      String id = element->GetIdAttribute();
+      String label = element->getAttribute(html_names::kAriaLabelAttr);
+      String anchor;
+      if (!id.empty())
+        anchor = "id:" + id;
+      else {
+        std::map<std::string, String> data;
+        unsigned count = 0;
+        for (const auto& attribute : element->Attributes()) {
+          if (++count > kAttributes) {
+            *truncated = true;
+            break;
+          }
+          String name = attribute.GetName().ToString();
+          if (name.starts_with("data-") && !attribute.Value().empty())
+            data.emplace(name.Utf8(), attribute.Value());
+        }
+        if (!data.empty())
+          anchor = String::FromUtf8(data.begin()->first) + "=" + data.begin()->second;
+        else if (!label.empty())
+          anchor = "aria-label:" + label;
+      }
+      // Group leaf changes under their containing place, rather than creating
+      // one location for every leaf ID. A landmark itself owns its changes.
+      if (landmark || (!landmark_only && cursor != node && !anchor.empty())) {
+        String position = Position(cursor);
+        location->setString("key", IdentityScope(cursor) + ":" +
+                                      Hash(anchor.empty() ? tag + "|" + position : anchor));
+        location->setString("kind", landmark ? "landmark" : "labelled-ancestor");
+        location->setString("tag", Cap(tag, truncated));
+        location->setString("id", Cap(id, truncated));
+        location->setString("label", Cap(label.empty() ? (anchor.empty() ? tag : anchor) : label, truncated));
+        location->setString("position", Cap(position, truncated, 2048));
+        return location;
+      }
+    }
+    if (auto* shadow = DynamicTo<ShadowRoot>(cursor))
+      cursor = &shadow->host();
+    else
+      cursor = cursor->parentNode();
+  }
+  if (cursor)
+    *truncated = true;
+  location->setString("key", FrameScope(node->GetDocument().GetFrame()) + ":document");
+  location->setString("kind", "document");
+  location->setString("label", "document");
+  return location;
+}
+
+std::unique_ptr<Dict> RendererDOMRecorder::CaptureNode(Node* node,
+                                                       const String& position,
+                                                       const String& scope,
+                                                       bool full,
+                                                       bool* truncated) {
+  auto d = Dict::create();
+  d->setString("position", position);
+  d->setString("tag", Cap(node->nodeName(), truncated));
+  if (position.contains("unavailable"))
+    *truncated = true;
+  d->setInteger("nodeType", node->getNodeType());
+  d->setObject("location", Location(node, false, truncated));
+  d->setObject("landmark", Location(node, true, truncated));
+  if (!full) {
+    // Identity is local to this recording, only for tracking object lifetimes.
+    // Cross-version matching and comparison explicitly ignore these tokens.
+    d->setInteger("instance", IdentifiersFactory::IntIdForNode(node));
+    if (node->parentNode())
+      d->setInteger("parentInstance", IdentifiersFactory::IntIdForNode(node->parentNode()));
+  }
+  auto attrs = Dict::create();
+  auto keys = List::create();
+  auto key = [&](int rank, const String& text) {
+    // Hash full identity values before truncating display text.
+    keys->pushValue(protocol::StringValue::create(String::Number(rank) + ":" +
+                                                  scope + ":" + Hash(text)));
+  };
+  String text =
+      chromiumrl_agent_->ComputeDirectText(node, kStringChars, truncated);
+  // CharacterData includes script/style text, comments and whitespace.
+  if (auto* data = DynamicTo<CharacterData>(node))
+    text = Cap(data->data(), truncated);
+  d->setString("text", text);
+  if (auto* e = DynamicTo<Element>(node)) {
+    std::map<std::string, String> sorted;
+    auto attributes = ReadNodeAttributes(e, kAttributes, truncated);
+    for (const auto& attribute : *attributes)
+      sorted.emplace(attribute->getName().Utf8(), attribute->getValue());
+    for (const auto& [name, value] : sorted) {
+      attrs->setString(Cap(String::FromUtf8(name), truncated),
+                       Cap(value, truncated));
+      if (name == "id" && !value.empty())
+        key(0, value);
+      if (name.starts_with("data-") && !value.empty())
+        key(1, String::FromUtf8(name) + "=" + value);
+    }
+    String role, name;
+    // Snapshot capture creates an AXContext; mutation hooks never flush AX or
+    // layout.
+    if (full) {
+      role = chromiumrl_agent_->GetAriaRoleName(e);
+      name = chromiumrl_agent_->GetAccessibleName(e);
+    } else {
+      role = e->getAttribute(AtomicString("role"));
+      name = e->getAttribute(AtomicString("aria-label"));
+    }
+    auto ax = Dict::create();
+    ax->setBoolean("computed", full);
+    ax->setString("role", Cap(role, truncated));
+    ax->setString("name", Cap(name, truncated));
+    d->setObject("accessibility", std::move(ax));
+    if (!role.empty() && !name.empty())
+      key(2, role + "|" + name);
+    // Landmark ancestry plus position within the landmark is a lower-priority
+    // key.
+    Node* parent = e->parentNode();
+    for (int depth = 0; parent && depth < 64;
+         ++depth, parent = parent->parentNode()) {
+      if (auto* landmark = DynamicTo<Element>(parent)) {
+        String tag = landmark->localName();
+        String parent_role = landmark->getAttribute(AtomicString("role"));
+        if (tag == "main" || tag == "nav" || tag == "header" ||
+            tag == "footer" || tag == "aside" || parent_role == "main" ||
+            parent_role == "navigation" || parent_role == "banner" ||
+            parent_role == "contentinfo" || parent_role == "complementary") {
+          String ancestor_position = Position(landmark);
+          key(3, tag + "|" + parent_role + "|" + landmark->GetIdAttribute() +
+                     "|" + position.substr(ancestor_position.length()));
+          break;
+        }
+      }
+    }
+    key(4, e->localName() + "|" + e->getAttribute(AtomicString("class")) + "|" +
+               text);
+    auto form = Dict::create();
+    auto states = chromiumrl_agent_->CollectNodeStates(e);
+    for (const auto& state : *states)
+      form->setString(state->getName(), state->getValue());
+    if (auto* control = DynamicTo<HTMLFormControlElement>(e)) {
+      form->setBoolean("disabled", control->IsDisabledFormControl());
+      form->setBoolean("required", control->IsRequired());
+      form->setBoolean("willValidate", control->WillValidate());
+      form->setBoolean("valueMissing", control->ValueMissing());
+      form->setBoolean("typeMismatch", control->TypeMismatch());
+      form->setBoolean("patternMismatch", control->PatternMismatch());
+      form->setBoolean("customError", control->CustomError());
+    }
+    if (auto* input = DynamicTo<HTMLInputElement>(e)) {
+      form->setString("value", Cap(input->Value(), truncated));
+      form->setBoolean("checked", input->Checked());
+      form->setBoolean("indeterminate", input->indeterminate());
+    }
+    if (auto* area = DynamicTo<HTMLTextAreaElement>(e))
+      form->setString("value", Cap(area->Value(), truncated));
+    if (auto* select = DynamicTo<HTMLSelectElement>(e)) {
+      form->setString("value", Cap(select->Value(), truncated));
+      form->setInteger("selectedIndex", select->selectedIndex());
+    }
+    if (auto* option = DynamicTo<HTMLOptionElement>(e))
+      form->setBoolean("selected", option->Selected());
+    form->setBoolean("focused", e->GetDocument().FocusedElement() == e);
+    d->setObject("form", std::move(form));
+    if (auto* image = DynamicTo<HTMLImageElement>(e)) {
+      auto image_state = Dict::create();
+      image_state->setString("currentSrc", Cap(image->currentSrc(), truncated));
+      image_state->setDouble("naturalWidth", image->naturalWidth());
+      image_state->setDouble("naturalHeight", image->naturalHeight());
+      image_state->setBoolean("complete", image->complete());
+      d->setObject("image", std::move(image_state));
+    }
+    if (full) {
+      auto* computed = MakeGarbageCollected<CSSComputedStyleDeclaration>(e);
+      // ScopedCleanStyleForAllProperties avoids repeated layout flushes.
+      CSSComputedStyleDeclaration::ScopedCleanStyleForAllProperties clean(
+          computed);
+      CSSStyleDeclaration* declaration = computed;
+      std::map<std::string, String> style_values;
+      unsigned length = declaration->length();
+      if (length > kStyles)
+        *truncated = true;
+      for (unsigned i = 0; i < std::min(length, kStyles); ++i) {
+        String property = declaration->item(i);
+        style_values[property.Utf8()] = declaration->getPropertyValue(property);
+      }
+      auto styles = Dict::create();
+      for (const auto& [property, value] : style_values)
+        styles->setString(Cap(String::FromUtf8(property), truncated),
+                          Cap(value, truncated));
+      d->setObject("styles", std::move(styles));
+    }
+  } else {
+    key(4, node->nodeName() + "|" + text);
+  }
+  d->setObject("attributes", std::move(attrs));
+  d->setArray("stableKeys", std::move(keys));
+  if (full) {
+    d->setBoolean("hasLayout", !!node->GetLayoutObject());
+    if (node->GetLayoutObject()) {
+      auto box = ReadNodeBounds(node);
+      d->setObject("geometry",
+                   Rect(box.x(), box.y(), box.width(), box.height()));
+    }
+  }
+  return d;
+}
+
+std::unique_ptr<Dict> RendererDOMRecorder::Capture(int max_nodes) {
+  base::AutoReset<bool> guard(&capturing_, true);
+  bool truncated = false;
+  auto state = renderer_dom::Envelope("state");
+  auto nodes = List::create();
+  auto documents = List::create();
+  auto coverage = Dict::create();
+  bool remote_frames = false;
+  size_t bytes = 0;
+  auto fits = [&](const renderer_dom::Value& value) {
+    size_t size = renderer_dom::Bytes(value);
+    if (bytes + size > renderer_dom::kStateBytes - 65536) {
+      truncated = true;
+      return false;
+    }
+    bytes += size;
+    return true;
+  };
+  unsigned frame_count = 0;
+  for (LocalFrame* frame : *inspected_frames_) {
+    if (++frame_count > 32) {
+      truncated = true;
+      break;
+    }
+    Document* document = frame->GetDocument();
+    if (!document || !document->IsActive())
+      continue;
+    AXContext ax_context(*document, ui::kAXModeComplete);
+    document->UpdateStyleAndLayout(DocumentUpdateReason::kInspector);
+    auto meta = Dict::create();
+    String scope = FrameScope(frame);
+    if (scope.contains("unavailable")) {
+      truncated = true;
+      continue;
+    }
+    meta->setString("scope", scope);
+    meta->setString("url", Cap(document->Url().GetString(), &truncated));
+    meta->setString("baseURL",
+                    Cap(document->BaseURL().GetString(), &truncated));
+    meta->setString("title", Cap(document->title(), &truncated));
+    meta->setString("readyState", document->readyState().AsString());
+    if (auto* window = document->domWindow()) {
+      auto viewport = Dict::create();
+      viewport->setInteger("width", window->innerWidth());
+      viewport->setInteger("height", window->innerHeight());
+      viewport->setDouble("devicePixelRatio", window->devicePixelRatio());
+      viewport->setDouble("scrollX", window->scrollX());
+      viewport->setDouble("scrollY", window->scrollY());
+      meta->setObject("viewport", std::move(viewport));
+    }
+    auto fonts = List::create();
+    HeapHashSet<Member<FontFace>> seen_fonts;
+    auto append_font = [&](FontFace* face) {
+      if (!face || seen_fonts.Contains(face))
+        return;
+      if (fonts->size() >= kFonts) {
+        truncated = true;
+        return;
+      }
+      seen_fonts.insert(face);
+      fonts->pushValue(FontInfo(face, &truncated));
+    };
+    if (auto* selector = document->GetStyleEngine().GetFontSelector()) {
+      const auto& faces = selector->GetFontFaceCache()->CssConnectedFontFaces();
+      if (faces.size() > kFonts)
+        truncated = true;
+      for (const auto& face : faces) {
+        append_font(face);
+        if (fonts->size() >= kFonts)
+          break;
+      }
+    }
+    // Enumerate an existing native font set without calling page-installed
+    // document.fonts/iterator methods or creating a page context/font set.
+    if (auto* font_set =
+            Supplement<Document>::From<FontFaceSetDocument>(*document)) {
+      if (font_set->size() > kFonts) {
+        truncated = true;
+      } else {
+        auto* isolate = frame->GetPage()->GetAgentGroupScheduler().Isolate();
+        v8::HandleScope handles(isolate);
+        auto context =
+            ToV8ContextMaybeEmpty(frame, DOMWrapperWorld::MainWorld(isolate));
+        if (!context.IsEmpty()) {
+          auto* script_state = ScriptState::From(isolate, context);
+          if (script_state->ContextIsValid()) {
+            ScriptState::Scope script_scope(script_state);
+            auto* iterator = font_set->valuesForBinding(script_state);
+            for (unsigned i = 0; iterator && i <= kFonts; ++i) {
+              v8::Local<v8::Value> value;
+              bool done = false;
+              if (!V8UnpackIterationResult(script_state,
+                                           iterator->next(script_state), &value,
+                                           &done)) {
+                truncated = true;
+                break;
+              }
+              if (done)
+                break;
+              append_font(V8FontFace::ToWrappable(isolate, value));
+            }
+          }
+        }
+      }
+    }
+    meta->setArray("fonts", std::move(fonts));
+    if (fits(*meta))
+      documents->pushValue(std::move(meta));
+    std::function<void(Node*, const String&, const String&, int)> visit;
+    visit = [&](Node* node, const String& path, const String& tree_scope,
+                int depth) {
+      if ((node->getNodeType() == Node::kCommentNode) && !include_comments_)
+        return;
+      if (nodes->size() >= static_cast<size_t>(max_nodes) || depth > 64) {
+        truncated = true;
+        return;
+      }
+      auto data = CaptureNode(node, path, tree_scope, true, &truncated);
+      if (!fits(*data))
+        return;
+      nodes->pushValue(std::move(data));
+      if (auto* owner = DynamicTo<HTMLFrameOwnerElement>(node)) {
+        if (owner->ContentFrame() && !owner->ContentFrame()->IsLocalFrame())
+          remote_frames = true;
+      }
+      unsigned index = 0;
+      for (Node* child = node->firstChild(); child;
+           child = child->nextSibling()) {
+        if (nodes->size() >= static_cast<size_t>(max_nodes) ||
+            bytes > renderer_dom::kStateBytes - 131072) {
+          truncated = true;
+          break;
+        }
+        visit(child, path + "/" + String::Number(index++), tree_scope,
+              depth + 1);
+      }
+      if (auto* shadow = node->GetShadowRoot()) {
+        if (!shadow->IsUserAgent()) {
+          visit(shadow, path + "/shadow", path + "/shadow", depth + 1);
+        }
+      }
+    };
+    visit(document, scope, scope, 0);
+    if (nodes->size() >= static_cast<size_t>(max_nodes)) {
+      truncated = true;
+      break;
+    }
+  }
+  auto document = Dict::create();
+  document->setArray("frames", std::move(documents));
+  state->setObject("document", std::move(document));
+  state->setArray("nodes", std::move(nodes));
+  coverage->setString("scope",
+                      "inspected-local-frames-and-author-shadow-roots");
+  coverage->setBoolean("remoteFramesOmitted", remote_frames);
+  coverage->setString("recordingScope", "one-document-no-persistence");
+  coverage->setBoolean("commentsIncluded", include_comments_);
+  coverage->setString(
+      "mutationProvenance",
+      "shared-native-DOM-probes; deferred-style-initiators-unavailable");
+  coverage->setString(
+      "mutations", "shared-native-DOM-notifications-with-bounded-old-values");
+  coverage->setString("CSSOM", "sampled-not-synchronous");
+  coverage->setString("pixels", "not-captured");
+  coverage->setString("pseudoElements", "not-captured");
+  coverage->setString("workers", "separate-targets-not-captured");
+  coverage->setString("fonts", "CSS-connected-and-existing-document-font-set");
+  coverage->setBoolean("incomplete", true);
+  state->setObject("coverage", std::move(coverage));
+  auto limits = Dict::create();
+  limits->setInteger("maxNodes", max_nodes);
+  limits->setInteger("maxStringChars", kStringChars);
+  limits->setInteger("maxAttributesPerNode", kAttributes);
+  limits->setInteger("maxStylesPerNode", kStyles);
+  limits->setInteger("maxFonts", kFonts);
+  limits->setInteger("maxBytes", renderer_dom::kStateBytes);
+  state->setObject("limits", std::move(limits));
+  state->setBoolean("truncated", truncated);
+  return state;
+}
+
+protocol::Response RendererDOMRecorder::captureState(
+    std::optional<int> max_nodes,
+    std::optional<bool> include_comments,
+    std::unique_ptr<Dict>* state) {
+  int cap = max_nodes.value_or(500);
+  if (cap < 1 || cap > 2000)
+    return protocol::Response::InvalidParams("maxNodes must be 1..2000");
+  if (!inspected_frames_->Root()->GetDocument())
+    return protocol::Response::ServerError("No active document");
+  base::AutoReset<bool> comments(&include_comments_,
+                                 include_comments.value_or(false));
+  *state = Capture(cap);
+  return protocol::Response::Success();
+}
+protocol::Response RendererDOMRecorder::startRecording(
+    std::optional<int> max_nodes,
+    std::optional<int> max_events,
+    std::optional<int> max_checkpoints,
+    std::optional<bool> include_comments,
+    std::unique_ptr<Dict>* recording) {
+  if (active_)
+    return protocol::Response::ServerError("Recording already active");
+  if (!dom_diff_active_)
+    StopDOMObserver();
+  if (!inspected_frames_->Root()->GetDocument())
+    return protocol::Response::ServerError("No document");
+  int n = max_nodes.value_or(500), e = max_events.value_or(4000);
+  int c = max_checkpoints.value_or(32);
+  if (n < 1 || n > 2000 || e < 1 || e > 10000 || c < 1 || c > 128)
+    return protocol::Response::InvalidParams("Recorder limits out of range");
+  max_nodes_ = n;
+  max_events_ = e;
+  max_checkpoints_ = c;
+  include_comments_ = include_comments.value_or(false);
+  recording_document_ = inspected_frames_->Root()->GetDocument();
+  recording_ = renderer_dom::Envelope("recording");
+  auto limits = Dict::create();
+  limits->setInteger("maxNodes", n);
+  limits->setInteger("maxEvents", e);
+  limits->setInteger("maxObservedNodes", 2000);
+  limits->setInteger("maxCheckpoints", c);
+  limits->setBoolean("includeComments", include_comments_);
+  limits->setInteger("maxBytes", renderer_dom::kRecordingBytes);
+  recording_->setObject("limits", std::move(limits));
+  recording_->setArray("events", List::create());
+  recording_->setArray("checkpoints", List::create());
+  recording_->setBoolean("active", true);
+  recording_->setInteger("droppedEvents", 0);
+  recording_bytes_ = 4096;
+  started_ = base::TimeTicks::Now();
+  active_ = true;
+  StartDOMObserver();
+  return readRecording(recording);
+}
+protocol::Response RendererDOMRecorder::readRecording(
+    std::unique_ptr<Dict>* recording) {
+  if (!recording_)
+    return protocol::Response::ServerError("No recording");
+  CheckDocument();
+  if (active_)
+    recording_->setDouble(
+        "durationMs", (base::TimeTicks::Now() - started_).InMillisecondsF());
+  *recording = Dict::cast(recording_->clone());
+  return protocol::Response::Success();
+}
+protocol::Response RendererDOMRecorder::stopRecording(
+    std::unique_ptr<Dict>* recording) {
+  if (!recording_)
+    return protocol::Response::ServerError("No recording");
+  if (active_) {
+    recording_->setDouble(
+        "durationMs", (base::TimeTicks::Now() - started_).InMillisecondsF());
+    Detach();
+    recording_->setBoolean("active", false);
+  }
+  return readRecording(recording);
+}
+void RendererDOMRecorder::StopDOMObserver() {
+  accepting_dom_ = false;
+  if (dom_agent_)
+    dom_agent_->Dispose();
+  dom_agent_.Clear();
+  dom_dispatcher_.reset();
+  dom_state_.reset();
+  followed_dom_nodes_.clear();
+  mutation_cache_.clear();
+  mutation_cache_bytes_ = 0;
+}
+void RendererDOMRecorder::Detach() {
+  active_ = false;
+  if (!dom_diff_active_)
+    StopDOMObserver();
+}
+protocol::Response RendererDOMRecorder::StartDiff() {
+  if (!inspected_frames_->Root()->GetDocument())
+    return protocol::Response::ServerError("No document to observe");
+  dom_diff_active_ = true;
+  StartDOMObserver();
+  return protocol::Response::Success();
+}
+void RendererDOMRecorder::StopDiff() {
+  dom_diff_active_ = false;
+  if (!active_)
+    StopDOMObserver();
+}
+protocol::Response RendererDOMRecorder::disable() {
+  Detach();
+  recording_.reset();
+  recording_bytes_ = 0;
+  return protocol::Response::Success();
+}
+void RendererDOMRecorder::Checkpoint() {
+  if (!active_ || capturing_)
+    return;
+  auto* points = recording_->getArray("checkpoints");
+  if (points->size() >= static_cast<size_t>(max_checkpoints_)) {
+    recording_->setBoolean("truncated", true);
+    return;
+  }
+  auto point = Dict::create();
+  point->setDouble("elapsedMs",
+                   (base::TimeTicks::Now() - started_).InMillisecondsF());
+  auto state = Capture(max_nodes_);
+  bool truncated = state->booleanProperty("truncated", false);
+  point->setObject("state", std::move(state));
+  size_t bytes = renderer_dom::Bytes(*point);
+  if (recording_bytes_ + bytes > renderer_dom::kRecordingBytes - 4096) {
+    recording_->setBoolean("truncated", true);
+    return;
+  }
+  recording_bytes_ += bytes;
+  points->pushValue(std::move(point));
+  if (truncated)
+    recording_->setBoolean("truncated", true);
+}
+bool RendererDOMRecorder::CanRecord() {
+  if (!CheckDocument() || capturing_)
+    return false;
+  if (recording_->getArray("events")->size() >=
+          static_cast<size_t>(max_events_) ||
+      recording_bytes_ >= renderer_dom::kRecordingBytes - 65536) {
+    recording_->setBoolean("truncated", true);
+    int dropped = recording_->integerProperty("droppedEvents", 0);
+    recording_->setInteger("droppedEvents", std::min(dropped, 2147483646) + 1);
+    return false;
+  }
+  return true;
+}
+void RendererDOMRecorder::AddEvent(std::unique_ptr<Dict> event) {
+  if (!CanRecord())
+    return;
+  auto* events = recording_->getArray("events");
+  event->setDouble("elapsedMs",
+                   (base::TimeTicks::Now() - started_).InMillisecondsF());
+  size_t bytes = renderer_dom::Bytes(*event);
+  if (events->size() >= static_cast<size_t>(max_events_) ||
+      recording_bytes_ + bytes > renderer_dom::kRecordingBytes - 4096) {
+    recording_->setBoolean("truncated", true);
+    int dropped = recording_->integerProperty("droppedEvents", 0);
+    recording_->setInteger("droppedEvents", std::min(dropped, 2147483646) + 1);
+    return;
+  }
+  if (event->booleanProperty("truncated", false))
+    recording_->setBoolean("truncated", true);
+  recording_bytes_ += bytes;
+  events->pushValue(std::move(event));
+}
+void RendererDOMRecorder::Mutation(const char* type,
+                                   Node* node,
+                                   const String& name,
+                                   const String& value,
+                                   const String* old_value,
+                                   std::unique_ptr<Dict> source) {
+  if (!node)
+    return;
+  // The legacy stream and the durable recording share this single delivery.
+  // Legacy node IDs remain live-session references, never cross-version keys.
+  if (dom_diff_active_) {
+    Node* target = (String(type) == "insert" || String(type) == "remove")
+                       ? node->parentNode()
+                       : node;
+    if (target) {
+      auto diff =
+          std::make_unique<protocol::Array<protocol::ChromiumRL::NodeDiff>>();
+      auto item =
+          protocol::ChromiumRL::NodeDiff::create()
+              .setNodeId(IdentifiersFactory::IntIdForNode(target))
+              .setSelectorPath(chromiumrl_agent_->BuildSelectorPath(target))
+              .build();
+      auto initiator =
+          protocol::ChromiumRL::MutationInitiator::create()
+              .setAvailable(source->booleanProperty("available", false))
+              .build();
+      if (source->booleanProperty("available", false)) {
+        initiator->setUrl(StringField(source.get(), "url"));
+        initiator->setLine(source->integerProperty("line", -1));
+        initiator->setColumn(source->integerProperty("column", -1));
+        initiator->setFunction(StringField(source.get(), "function"));
+      } else {
+        initiator->setReason(StringField(source.get(), "reason"));
+      }
+      item->setInitiator(std::move(initiator));
+      bool clipped = false;
+      if (String(type) == "attribute") {
+        auto attributes = std::make_unique<
+            protocol::Array<protocol::ChromiumRL::AttributeModification>>();
+        attributes->push_back(
+            protocol::ChromiumRL::AttributeModification::create()
+                .setName(Cap(name, &clipped))
+                .setOldValue(Cap(old_value ? *old_value : String(), &clipped))
+                .setNewValue(Cap(value, &clipped))
+                .build());
+        item->setAttributeModifications(std::move(attributes));
+      } else if (String(type) == "text") {
+        item->setCharacterDataModification(
+            protocol::ChromiumRL::CharacterDataModification::create()
+                .setOldData(Cap(old_value ? *old_value : String(), &clipped))
+                .setNewData(Cap(value, &clipped))
+                .build());
+      } else {
+        auto children = std::make_unique<
+            protocol::Array<protocol::ChromiumRL::NodeStructure>>();
+        children->push_back(
+            protocol::ChromiumRL::NodeStructure::create()
+                .setNodeId(IdentifiersFactory::IntIdForNode(node))
+                .setNodeName(node->nodeName())
+                .setNodeValue(Cap(node->nodeValue(), &clipped))
+                .build());
+        if (String(type) == "insert")
+          item->setAddedNodes(std::move(children));
+        else
+          item->setRemovedNodes(std::move(children));
+        if (clipped)
+          item->setTruncated(true);
+      }
+      if (clipped)
+        item->setTruncated(true);
+      diff->push_back(std::move(item));
+      chromiumrl_agent_->GetFrontend()->domDiffOccurred(std::move(diff));
+    }
+  }
+  if (!CanRecord() || !node ||
+      ((node->getNodeType() == Node::kCommentNode) && !include_comments_) ||
+      !inspected_frames_->Contains(node->GetDocument().GetFrame()))
+    return;
+  bool truncated = false;
+  auto event = Dict::create();
+  event->setString("type", type);
+  event->setString("name", Cap(name, &truncated));
+  event->setString("value", Cap(value, &truncated));
+  event->setBoolean("valueWasNull", value.IsNull());
+  if (old_value) {
+    event->setString("oldValue", Cap(*old_value, &truncated));
+    event->setBoolean("oldValueWasNull", old_value->IsNull());
+  }
+  event->setObject("target",
+                   CaptureNode(node, Position(node), IdentityScope(node), false,
+                               &truncated));
+  if (String(type) == "insert" || String(type) == "remove") {
+    auto subtree = List::create();
+    std::function<void(Node*, int)> visit = [&](Node* parent, int depth) {
+      for (Node* child = parent->firstChild(); child;
+           child = child->nextSibling()) {
+        if (child->getNodeType() == Node::kCommentNode && !include_comments_)
+          continue;
+        if (subtree->size() >= 64 || depth >= 16) {
+          truncated = true;
+          return;
+        }
+        subtree->pushValue(CaptureNode(
+            child, Position(child), IdentityScope(child), false, &truncated));
+        visit(child, depth + 1);
+      }
+    };
+    visit(node, 0);
+    event->setArray("subtree", std::move(subtree));
+  }
+  event->setString("observation", StringField(source.get(), "reason") ==
+                                          "deferred-inline-style-notification"
+                                      ? "deferred-native-DOM"
+                                      : "synchronous-native-DOM");
+  event->setObject("source", std::move(source));
+  event->setBoolean("truncated", truncated);
+  AddEvent(std::move(event));
+}
+void RendererDOMRecorder::DidCommitLoadForLocalFrame(LocalFrame*) {
+  CheckDocument();
+}
+
+bool RendererDOMRecorder::CheckDocument() {
+  if (active_ &&
+      recording_document_ != inspected_frames_->Root()->GetDocument()) {
+    active_ = false;
+    recording_->setBoolean("active", false);
+    recording_->setString("endedReason", "document-changed");
+    recording_->setDouble(
+        "durationMs", (base::TimeTicks::Now() - started_).InMillisecondsF());
+    if (!dom_diff_active_) {
+      accepting_dom_ = false;
+      if (dom_agent_)
+        chromiumrl_agent_->instrumenting_agents_->RemoveInspectorDOMAgent(
+            dom_agent_);
+    }
+  }
+  return active_;
+}
+
+protocol::Response RendererDOMRecorder::checkpointRecording(
+    std::unique_ptr<Dict>* checkpoint) {
+  if (!CheckDocument())
+    return protocol::Response::ServerError(
+        "No active recording for this document");
+  auto* points = recording_->getArray("checkpoints");
+  size_t count = points->size();
+  Checkpoint();
+  if (points->size() == count)
+    return protocol::Response::ServerError("Checkpoint budget exhausted");
+  *checkpoint = Dict::cast(points->at(count)->clone());
+  return protocol::Response::Success();
+}
+
+void RendererDOMRecorder::LayoutShift(const CLSTraceEntry& entry) {
+  if (!CanRecord())
+    return;
+  auto wire = chromiumrl_agent_->BuildCLSEntry(entry)->Serialize();
+  auto event =
+      Dict::cast(renderer_dom::Value::parseBinary(wire.data(), wire.size()));
+  event->setString("type", "layoutShift");
+  event->remove("timestamp");
+  event->remove("sessionWindowId");
+  // Live CDP node IDs are replaced with stable, serializable target facts.
+  bool truncated = false;
+  auto* shifted = event->getArray("shiftedElements");
+  for (size_t i = 0; i < shifted->size(); ++i) {
+    auto* item = Dict::cast(shifted->at(i));
+    if (Node* node = DOMNodeIds::NodeForId(item->integerProperty("nodeId", 0)))
+      item->setObject("target",
+                      CaptureNode(node, Position(node), IdentityScope(node),
+                                  false, &truncated));
+    item->remove("nodeId");
+  }
+  auto* sources = event->getArray("sources");
+  for (size_t i = 0; i < sources->size(); ++i)
+    Dict::cast(sources->at(i))->remove("nodeId");
+  event->setBoolean("truncated", truncated);
+  AddEvent(std::move(event));
+}
+}  // namespace blink
+
+namespace blink {
+void RendererDOMRecorder::StartDOMObserver() {
+  auto* page = inspected_frames_->Root()->GetPage();
+  if (!page || dom_agent_)
+    return;
+  dom_state_ = std::make_unique<InspectorSessionState>(nullptr);
+  dom_dispatcher_ = std::make_unique<protocol::UberDispatcher>(this);
+  dom_agent_ = MakeGarbageCollected<InspectorDOMAgent>(
+      page->GetAgentGroupScheduler().Isolate(), inspected_frames_.Get(),
+      nullptr);
+  dom_agent_->Init(chromiumrl_agent_->instrumenting_agents_.Get(),
+                   dom_dispatcher_.get(), dom_state_.get());
+  dom_agent_->enable(String("all"));
+  accepting_dom_ = true;
+  SeedDOMObserver();
+}
+
+void RendererDOMRecorder::SuspendDOMObserver() {
+  accepting_dom_ = false;
+  if (recording_) {
+    recording_->setBoolean("truncated", true);
+    recording_->setBoolean("mutationSourceTruncated", true);
+  }
+  if (dom_diff_active_) {
+    auto diff =
+        std::make_unique<protocol::Array<protocol::ChromiumRL::NodeDiff>>();
+    diff->push_back(protocol::ChromiumRL::NodeDiff::create()
+                        .setNodeId(0)
+                        .setSelectorPath("")
+                        .setTruncated(true)
+                        .build());
+    chromiumrl_agent_->GetFrontend()->domDiffOccurred(std::move(diff));
+  }
+  // Stop callbacks immediately without destroying maps used by the current
+  // callback. AgentRegistry explicitly supports removal while iterating.
+  chromiumrl_agent_->instrumenting_agents_->RemoveInspectorDOMAgent(dom_agent_);
+}
+
+void RendererDOMRecorder::SeedDOMObserver() {
+  if (!accepting_dom_ || (!CheckDocument() && !dom_diff_active_))
+    return;
+  followed_dom_nodes_.clear();
+  mutation_cache_.clear();
+  mutation_cache_bytes_ = 0;
+  std::unique_ptr<protocol::DOM::Node> root;
+  if (!dom_agent_->getDocument(0, false, &root).IsSuccess() || !root)
+    return;
+  auto bytes = root->Serialize();
+  auto parsed =
+      Dict::cast(renderer_dom::Value::parseBinary(bytes.data(), bytes.size()));
+  FollowDOMNode(parsed.get());
+}
+
+void RendererDOMRecorder::FollowDOMNode(Dict* description, unsigned depth) {
+  if (!accepting_dom_ || !description)
+    return;
+  int id = description->integerProperty("nodeId", 0);
+  if (!id || followed_dom_nodes_.Contains(id))
+    return;
+  if (depth >= 64 || followed_dom_nodes_.size() >= 2000) {
+    SuspendDOMObserver();
+    return;
+  }
+  followed_dom_nodes_.insert(id);
+  Node* node = dom_agent_->NodeForId(id);
+  if (!node || node->IsPseudoElement())
+    return;
+  if (auto* shadow = node->ContainingShadowRoot();
+      shadow && shadow->IsUserAgent())
+    return;
+  bool clipped = false;
+  auto cached = Dict::create();
+  cached->setString("text", Cap(node->nodeValue(), &clipped));
+  auto attributes = Dict::create();
+  if (auto* element = DynamicTo<Element>(node)) {
+    unsigned count = 0;
+    for (const auto& attribute : element->Attributes()) {
+      if (++count > kAttributes) {
+        clipped = true;
+        break;
+      }
+      attributes->setString(Cap(attribute.GetName().ToString(), &clipped),
+                            Cap(attribute.Value(), &clipped));
+    }
+  }
+  cached->setObject("attributes", std::move(attributes));
+  mutation_cache_bytes_ += renderer_dom::Bytes(*cached);
+  if (clipped || mutation_cache_bytes_ > 2 * 1024 * 1024) {
+    SuspendDOMObserver();
+    return;
+  }
+  mutation_cache_.Set(id, std::move(cached));
+  for (const char* field : {"children", "shadowRoots"}) {
+    if (auto* children = description->getArray(field)) {
+      for (size_t i = 0; i < children->size() && accepting_dom_; ++i)
+        FollowDOMNode(Dict::cast(children->at(i)), depth + 1);
+    }
+  }
+  FollowDOMNode(description->getObject("contentDocument"), depth + 1);
+  if (!accepting_dom_ || (!node->IsContainerNode()))
+    return;
+  // requestChildNodes has no count limit. Check the immediate child list before
+  // invoking it, and bound recursion and the total lifetime subscription count.
+  size_t count = followed_dom_nodes_.size();
+  for (Node* child = node->firstChild(); child; child = child->nextSibling()) {
+    int child_id = dom_agent_->BoundNodeId(child);
+    if (child_id && followed_dom_nodes_.Contains(child_id))
+      continue;
+    if (++count > 2000) {
+      SuspendDOMObserver();
+      return;
+    }
+  }
+  dom_agent_->requestChildNodes(id, 1, false);
+}
+
+void RendererDOMRecorder::SendProtocolNotification(
+    std::unique_ptr<protocol::Serializable> message) {
+  if (!accepting_dom_ || (!CheckDocument() && !dom_diff_active_) || capturing_)
+    return;
+  if (dom_callback_depth_ >= 64 ||
+      (active_ && !CanRecord() && !dom_diff_active_)) {
+    SuspendDOMObserver();
+    return;
+  }
+  base::AutoReset<unsigned> depth(&dom_callback_depth_,
+                                  dom_callback_depth_ + 1);
+  auto bytes = message->Serialize();
+  if (bytes.size() > 1024 * 1024) {
+    SuspendDOMObserver();
+    return;
+  }
+  auto parsed =
+      Dict::cast(renderer_dom::Value::parseBinary(bytes.data(), bytes.size()));
+  if (!parsed)
+    return;
+  String method = StringField(parsed.get(), "method");
+  auto* params = parsed->getObject("params");
+  if (method == "DOM.documentUpdated") {
+    SeedDOMObserver();
+    return;
+  }
+  if (!params)
+    return;
+  if (method == "DOM.setChildNodes") {
+    if (auto* nodes = params->getArray("nodes")) {
+      for (size_t i = 0; i < nodes->size() && accepting_dom_; ++i)
+        FollowDOMNode(Dict::cast(nodes->at(i)));
+    }
+    return;
+  }
+  if (method == "DOM.shadowRootPushed") {
+    FollowDOMNode(params->getObject("root"));
+    return;
+  }
+  if (method == "DOM.inlineStyleInvalidated") {
+    if (auto* ids = params->getArray("nodeIds")) {
+      for (size_t i = 0; i < ids->size(); ++i) {
+        int id = 0;
+        ids->at(i)->asInteger(&id);
+        if (!id)
+          continue;
+        auto cached = mutation_cache_.find(id);
+        auto* node = dom_agent_->NodeForId(id);
+        auto* element = DynamicTo<Element>(node);
+        if (!element || cached == mutation_cache_.end())
+          continue;
+        auto* attributes = cached->value->getObject("attributes");
+        String old_value;
+        attributes->getString("style", &old_value);
+        String value = element->getAttribute(html_names::kStyleAttr);
+        if (old_value == value)
+          continue;
+        auto source = Dict::create();
+        source->setBoolean("available", false);
+        source->setString("reason", "deferred-inline-style-notification");
+        Mutation("attribute", node, "style", value, &old_value,
+                 std::move(source));
+        mutation_cache_bytes_ -= renderer_dom::Bytes(*cached->value);
+        bool clipped = false;
+        if (value.IsNull())
+          attributes->remove("style");
+        else
+          attributes->setString("style", Cap(value, &clipped));
+        mutation_cache_bytes_ += renderer_dom::Bytes(*cached->value);
+        if (clipped || mutation_cache_bytes_ > 2 * 1024 * 1024) {
+          SuspendDOMObserver();
+          break;
+        }
+      }
+    }
+    return;
+  }
+  String mutation;
+  String value = StringField(params, "value");
+  auto* inserted = params->getObject("node");
+  int id = inserted ? inserted->integerProperty("nodeId", 0)
+                    : params->integerProperty("nodeId", 0);
+  if (method == "DOM.attributeModified" || method == "DOM.attributeRemoved")
+    mutation = "attribute";
+  else if (method == "DOM.characterDataModified") {
+    mutation = "text";
+    value = StringField(params, "characterData");
+  } else if (method == "DOM.childNodeInserted")
+    mutation = "insert";
+  else if (method == "DOM.childNodeRemoved")
+    mutation = "remove";
+  if (mutation.empty())
+    return;
+  Node* node = dom_agent_->NodeForId(id);
+  if (!node || node->IsPseudoElement())
+    return;
+  if (auto* shadow = node->ContainingShadowRoot();
+      shadow && shadow->IsUserAgent())
+    return;
+  bool truncated = false;
+  auto source = Source(CaptureSourceLocation(), &truncated);
+  if (!source->booleanProperty("available", false))
+    source->setString("reason", "no-synchronous-script-stack");
+  String name = StringField(params, "name"), old_value;
+  auto cached = mutation_cache_.find(id);
+  if (cached != mutation_cache_.end()) {
+    mutation_cache_bytes_ -= renderer_dom::Bytes(*cached->value);
+    if (mutation == "attribute") {
+      auto* attributes = cached->value->getObject("attributes");
+      attributes->getString(name, &old_value);
+      if (method == "DOM.attributeRemoved") {
+        value = String();
+        attributes->remove(name);
+      } else {
+        attributes->setString(Cap(name, &truncated), Cap(value, &truncated));
+        truncated |= attributes->size() > kAttributes;
+      }
+    } else if (mutation == "text") {
+      cached->value->getString("text", &old_value);
+      cached->value->setString("text", Cap(value, &truncated));
+    }
+    mutation_cache_bytes_ += renderer_dom::Bytes(*cached->value);
+  }
+  Mutation(
+      mutation.Utf8().c_str(), node, name, value,
+      (mutation == "attribute" || mutation == "text") ? &old_value : nullptr,
+      std::move(source));
+  if (truncated || mutation_cache_bytes_ > 2 * 1024 * 1024)
+    SuspendDOMObserver();
+  if (inserted)
+    FollowDOMNode(inserted);
+}
+
+RendererDOMRecorder* InspectorChromiumRLAgent::EnsureRendererDOMRecorder() {
+  if (!renderer_dom_recorder_)
+    renderer_dom_recorder_ = MakeGarbageCollected<RendererDOMRecorder>(this);
+  return renderer_dom_recorder_.Get();
+}
+void InspectorChromiumRLAgent::RendererDOMDidCommitLoad(LocalFrame* frame) {
+  if (renderer_dom_recorder_)
+    renderer_dom_recorder_->DidCommitLoadForLocalFrame(frame);
+}
+void InspectorChromiumRLAgent::Dispose() {
+  // Session disposal discards this document-scoped recording.
+  if (renderer_dom_recorder_) {
+    renderer_dom_recorder_->StopDiff();
+    renderer_dom_recorder_->disable();
+  }
+  renderer_dom_recorder_ = nullptr;
+  InspectorBaseAgent::Dispose();
+}
+protocol::Response InspectorChromiumRLAgent::captureRendererDOMState(
+    std::optional<int> cap,
+    std::optional<bool> include_comments,
+    std::unique_ptr<renderer_dom::Dict>* state) {
+  return EnsureRendererDOMRecorder()->captureState(cap, include_comments,
+                                                   state);
+}
+protocol::Response InspectorChromiumRLAgent::compareRendererDOMStates(
+    std::unique_ptr<renderer_dom::Dict> before,
+    std::unique_ptr<renderer_dom::Dict> after,
+    std::optional<int> cap,
+    std::unique_ptr<renderer_dom::Dict>* result) {
+  return renderer_dom::Compare(before.get(), after.get(), cap.value_or(2000),
+                               false, result);
+}
+protocol::Response InspectorChromiumRLAgent::startRendererDOMRecording(
+    std::optional<int> nodes,
+    std::optional<int> events,
+    std::optional<int> points,
+    std::optional<bool> include_comments,
+    std::unique_ptr<renderer_dom::Dict>* recording) {
+  return EnsureRendererDOMRecorder()->startRecording(
+      nodes, events, points, include_comments, recording);
+}
+protocol::Response InspectorChromiumRLAgent::checkpointRendererDOMRecording(
+    std::unique_ptr<renderer_dom::Dict>* checkpoint) {
+  return EnsureRendererDOMRecorder()->checkpointRecording(checkpoint);
+}
+protocol::Response InspectorChromiumRLAgent::readRendererDOMRecording(
+    std::unique_ptr<renderer_dom::Dict>* recording) {
+  return EnsureRendererDOMRecorder()->readRecording(recording);
+}
+protocol::Response InspectorChromiumRLAgent::stopRendererDOMRecording(
+    std::unique_ptr<renderer_dom::Dict>* recording) {
+  return EnsureRendererDOMRecorder()->stopRecording(recording);
+}
+protocol::Response InspectorChromiumRLAgent::compareRendererDOMRecordings(
+    std::unique_ptr<renderer_dom::Dict> before,
+    std::unique_ptr<renderer_dom::Dict> after,
+    std::optional<int> cap,
+    std::unique_ptr<renderer_dom::Dict>* result) {
+  return renderer_dom::Compare(before.get(), after.get(), cap.value_or(2000),
+                               true, result);
+}
+protocol::Response InspectorChromiumRLAgent::getRendererDOMModel(
+    std::unique_ptr<renderer_dom::Dict> diff,
+    std::unique_ptr<renderer_dom::Dict> recording_diff,
+    std::unique_ptr<protocol::Array<renderer_dom::Dict>> new_errors,
+    std::optional<int> max_items,
+    std::unique_ptr<renderer_dom::Dict>* model) {
+  if (!!diff == !!recording_diff)
+    return protocol::Response::InvalidParams(
+        "Supply exactly one of diff or recordingDiff");
+  auto errors = renderer_dom::List::create();
+  if (new_errors) {
+    if (new_errors->size() > 1000)
+      return protocol::Response::InvalidParams("Too many client errors");
+    for (auto& error : *new_errors)
+      errors->pushValue(std::move(error));
+  }
+  return renderer_dom::Model(diff ? diff.get() : recording_diff.get(),
+                             errors.get(), max_items.value_or(20), model);
+}
+protocol::Response InspectorChromiumRLAgent::disableRendererDOM() {
+  if (renderer_dom_recorder_)
+    renderer_dom_recorder_->disable();
+  return protocol::Response::Success();
+}
 }  // namespace blink

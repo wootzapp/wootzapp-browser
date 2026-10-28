@@ -162,7 +162,8 @@ experimental domain ChromiumRL
     returns
       ModelDOM modelDOM
 
-  # Start tracking DOM differences. The first call will report the initial state.
+  # Track native DOM notifications through the shared mutation recorder.
+  # A truncated entry reports the bounded subscription/cache limit (2000 nodes).
   command startDOMDiff
   
   # Stop tracking DOM differences.
@@ -260,8 +261,20 @@ experimental domain ChromiumRL
       array of string extraNodes
       optional array of SnapshotNode targetSnapshot
 
+  # Optional synchronous mutation origin; deferred notifications explicitly say unavailable.
+  type MutationInitiator extends object
+    properties
+      boolean available
+      optional string url
+      optional integer line
+      optional integer column
+      optional string function
+      optional string reason
+
   type NodeDiff extends object
     properties
+      optional MutationInitiator initiator
+      optional boolean truncated
       DOM.NodeId nodeId
       string selectorPath
       optional array of AttributeModification attributeModifications
@@ -345,7 +358,10 @@ experimental domain ChromiumRL
       DOM.Rect previousRect
       DOM.Rect currentRect
       number shiftDistance
+      # Geometric allocation, not independently measured per-element CLS.
       number scoreContribution
+      optional number scoreShare
+      optional string shareMethod
 
   type ShiftSource extends object
     properties
@@ -1002,3 +1018,106 @@ experimental domain ChromiumRL
     properties
       string rendererName
       array of ModelDOMSection sections
+
+  # RendererDOM: saved, versioned evidence for code-change verification.
+  # All commands are read-only. Comparison uses only supplied JSON.
+  # Envelopes contain schemaVersion=2, kind, truncated, and coverage/limits.
+  # Defaults: 500 nodes; 4000 events; 32 explicit checkpoints.
+  # States/comparisons are capped at 8 MiB; recordings at 32 MiB.
+  # Fields are capped at 1024 UTF-16 units; nodes have <=128 attributes,
+  # <=1024 computed properties; DOM depth <=64.
+  # Identity priority: id, data-* value, role/name, landmark/position,
+  # tag/class/text hash, then scoped tree position. Ambiguity is explicit.
+  # Omitted: pixels, pseudo-elements, UA shadow roots, remote frames/workers,
+  # complete AX trees. Native
+  # mutation initiators retain available script locations. Standard CDP supplies
+  # CSS provenance, diagnostics, network status and general performance entries.
+  # Missing/truncated coverage never establishes full equivalence.
+
+  # Capture document metadata, all DOM node kinds (including head and hidden
+  # content), computed styles/custom properties, geometry, AX names/roles,
+  # form state, fonts and images.
+  command captureRendererDOMState
+    parameters
+      # 1..2000; default 500. State payload also has an 8 MiB hard cap.
+      optional integer maxNodes
+      # Defaults to false.
+      optional boolean includeComments
+    returns
+      object state
+
+  # Pure comparison of two saved states. Validates version, shape and budgets.
+  # Matching uses ordered semantic keys and scoped tree position, never node IDs.
+  # Result includes changes, matches, ambiguous matches and completeness status.
+  command compareRendererDOMStates
+    parameters
+      object before
+      object after
+      # 1..10000; default 2000. Output also has an 8 MiB hard cap.
+      optional integer maxChanges
+    returns
+      object result
+
+  # Observe native DOM mutations and layout shifts in the current document.
+  # Checkpoints are requested explicitly; no renderer polling timer runs.
+  # Mutation records retain old values and transient effects between checkpoints.
+  # Each mutation retains its available synchronous initiator. Deferred inline-style
+  # notifications have no causal stack and may coalesce same-task style changes.
+  # CSSOM-only changes and form properties are sampled. No new probes are installed.
+  command startRendererDOMRecording
+    parameters
+      optional integer maxNodes
+      # 1..10000; default 4000; total recording budget is 32 MiB.
+      optional integer maxEvents
+      # 1..128; default 32. A full buffer stops adding, never overwrites evidence.
+      optional integer maxCheckpoints
+      optional boolean includeComments
+    returns
+      object recording
+
+  # Explicitly capture a rendered state. This is the only recording command
+  # that flushes style/layout. Start/read/stop never take implicit snapshots.
+  command checkpointRendererDOMRecording
+    returns
+      object checkpoint
+
+  # Return a copy of accumulated serializable evidence without stopping.
+  command readRendererDOMRecording
+    returns
+      object recording
+
+  # Stop observation without capturing a state. No live page is needed to compare
+  # saved data. Navigation ends this recording; renderer replacement discards it.
+  command stopRendererDOMRecording
+    returns
+      object recording
+
+  # Pure comparison of saved recordings, including intermediate states and
+  # ordered event streams. Timings are reported separately from content changes.
+  # Undone evidence includes value restoration and removed/replaced inserted content,
+  # with available initiators, times, stable keys and landmarks. Recording-local
+  # instance tokens distinguish moves from removal; never used across versions.
+  command compareRendererDOMRecordings
+    parameters
+      object before
+      object after
+      optional integer maxChanges
+    returns
+      object result
+
+  # Pure compact projection of exactly one saved comparison. Six bounded sections:
+  # change categories, locations, missing items, undone effects, client-supplied errors,
+  # and measured layout-shift contributors (root causes are not inferred).
+  # Output is <=64 KiB; maxItems applies separately to each section.
+  command getRendererDOMModel
+    parameters
+      optional object diff
+      optional object recordingDiff
+      optional array of object newErrors
+      # 1..100, default 20.
+      optional integer maxItems
+    returns
+      object model
+
+  # Detach observation and discard this document recording.
+  command disableRendererDOM

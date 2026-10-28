@@ -14,9 +14,28 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/layout/layout_shift_tracker.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
-#include "third_party/blink/renderer/core/dom/mutation_observer.h"
 #include "third_party/blink/renderer/core/inspector/chromiumrl_trace_buffer.h"
 #include "third_party/blink/renderer/core/inspector/inspector_session_state.h"
+
+#include "third_party/blink/renderer/core/inspector/protocol/protocol.h"
+
+namespace blink::renderer_dom {
+using Dict = protocol::DictionaryValue;
+using List = protocol::ListValue;
+using Value = protocol::Value;
+inline constexpr int kSchemaVersion = 2;
+inline constexpr size_t kStateBytes = 8 * 1024 * 1024;
+inline constexpr size_t kRecordingBytes = 32 * 1024 * 1024;
+// Independent of Document, frames, agents, IDs, clocks and process state.
+CORE_EXPORT protocol::Response Compare(Dict* before,
+                                       Dict* after,
+                                       int max_changes,
+                                       bool recording,
+                                       std::unique_ptr<Dict>* result);
+CORE_EXPORT String StringField(const Dict*, const char*);
+CORE_EXPORT size_t Bytes(const Value&);
+CORE_EXPORT std::unique_ptr<Dict> Envelope(const char* kind);
+}  // namespace blink::renderer_dom
 
 namespace cc {
 class Layer;
@@ -26,6 +45,7 @@ class LayerTreeHost;
 namespace blink {
 
 class InspectedFrames;
+class RendererDOMRecorder;
 
 // =============================================================================
 // Inspector Agent - handles CDP commands
@@ -33,7 +53,7 @@ class InspectedFrames;
 
 class CORE_EXPORT InspectorChromiumRLAgent final
     : public InspectorBaseAgent<protocol::ChromiumRL::Metainfo> {
-  class DOMDiffObserver;
+  friend class RendererDOMRecorder;
 
  public:
   explicit InspectorChromiumRLAgent(InspectedFrames* inspected_frames);
@@ -154,6 +174,42 @@ class CORE_EXPORT InspectorChromiumRLAgent final
       std::unique_ptr<protocol::ChromiumRL::StructuredPageSnapshot> snapshot,
       std::unique_ptr<protocol::ChromiumRL::ModelDOM>* model_dom) override;
 
+  // RendererDOM stores client-owned JSON independently of ChromiumRL baselines.
+  protocol::Response captureRendererDOMState(
+      std::optional<int>,
+      std::optional<bool>,
+      std::unique_ptr<renderer_dom::Dict>*) override;
+  protocol::Response compareRendererDOMStates(
+      std::unique_ptr<renderer_dom::Dict>,
+      std::unique_ptr<renderer_dom::Dict>,
+      std::optional<int>,
+      std::unique_ptr<renderer_dom::Dict>*) override;
+  protocol::Response startRendererDOMRecording(
+      std::optional<int>,
+      std::optional<int>,
+      std::optional<int>,
+      std::optional<bool>,
+      std::unique_ptr<renderer_dom::Dict>*) override;
+  protocol::Response checkpointRendererDOMRecording(
+      std::unique_ptr<renderer_dom::Dict>*) override;
+  protocol::Response readRendererDOMRecording(
+      std::unique_ptr<renderer_dom::Dict>*) override;
+  protocol::Response stopRendererDOMRecording(
+      std::unique_ptr<renderer_dom::Dict>*) override;
+  protocol::Response compareRendererDOMRecordings(
+      std::unique_ptr<renderer_dom::Dict>,
+      std::unique_ptr<renderer_dom::Dict>,
+      std::optional<int>,
+      std::unique_ptr<renderer_dom::Dict>*) override;
+  protocol::Response getRendererDOMModel(
+      std::unique_ptr<renderer_dom::Dict>,
+      std::unique_ptr<renderer_dom::Dict>,
+      std::unique_ptr<protocol::Array<renderer_dom::Dict>>,
+      std::optional<int>,
+      std::unique_ptr<renderer_dom::Dict>*) override;
+  protocol::Response disableRendererDOM() override;
+  void Dispose() override;
+
   // Callbacks from browser internals (hook these into Chromium)
   void OnTouchEvent(const blink::WebPointerEvent& event, Node* target_node);
   void OnLayoutComplete(LocalFrame* frame);
@@ -161,7 +217,6 @@ class CORE_EXPORT InspectorChromiumRLAgent final
                      bool had_recent_input,
                      const Vector<LayoutShiftTracker::Attribution>& attributions);
   void OnCompositorCommit(const cc::LayerTreeHost* layer_tree_host);
-  void OnDOMMutation(const HeapVector<Member<MutationRecord>>& records);
 
   static InspectorChromiumRLAgent* GetAgentForFrame(LocalFrame* frame);
 
@@ -269,6 +324,9 @@ class CORE_EXPORT InspectorChromiumRLAgent final
 
   std::unique_ptr<protocol::ChromiumRL::ModelDOM> BuildModelDOM(
       protocol::ChromiumRL::StructuredPageSnapshot* snapshot);
+  RendererDOMRecorder* EnsureRendererDOMRecorder();
+  void RendererDOMDidCommitLoad(LocalFrame*);
+  Member<RendererDOMRecorder> renderer_dom_recorder_;
   Member<InspectedFrames> inspected_frames_;
   Member<ChromiumRLTraceBuffer> trace_buffer_;
   
@@ -279,10 +337,8 @@ class CORE_EXPORT InspectorChromiumRLAgent final
   InspectorAgentState::Boolean capture_cls_attribution_;
   InspectorAgentState::Boolean capture_compositor_layers_;
   int last_source_frame_number_ = 0;
-  InspectorAgentState::Boolean enabled_; 
+  InspectorAgentState::Boolean enabled_;
 
-  Member<MutationObserver> dom_diff_observer_;
-  Member<DOMDiffObserver> dom_diff_delegate_;
   std::unique_ptr<protocol::ChromiumRL::RichDOMState> agent_observation_baseline_;
 };
 
