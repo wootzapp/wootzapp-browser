@@ -162,8 +162,7 @@ experimental domain ChromiumRL
     returns
       ModelDOM modelDOM
 
-  # Track native DOM notifications through the shared mutation recorder.
-  # A truncated entry reports the bounded subscription/cache limit (2000 nodes).
+  # Start tracking DOM differences. The first call will report the initial state.
   command startDOMDiff
   
   # Stop tracking DOM differences.
@@ -261,20 +260,8 @@ experimental domain ChromiumRL
       array of string extraNodes
       optional array of SnapshotNode targetSnapshot
 
-  # Optional synchronous mutation origin; deferred notifications explicitly say unavailable.
-  type MutationInitiator extends object
-    properties
-      boolean available
-      optional string url
-      optional integer line
-      optional integer column
-      optional string function
-      optional string reason
-
   type NodeDiff extends object
     properties
-      optional MutationInitiator initiator
-      optional boolean truncated
       DOM.NodeId nodeId
       string selectorPath
       optional array of AttributeModification attributeModifications
@@ -358,10 +345,7 @@ experimental domain ChromiumRL
       DOM.Rect previousRect
       DOM.Rect currentRect
       number shiftDistance
-      # Geometric allocation, not independently measured per-element CLS.
       number scoreContribution
-      optional number scoreShare
-      optional string shareMethod
 
   type ShiftSource extends object
     properties

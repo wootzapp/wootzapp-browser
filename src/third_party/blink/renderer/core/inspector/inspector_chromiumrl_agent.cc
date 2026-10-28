@@ -2,8 +2,6 @@
 // File: third_party/blink/renderer/core/inspector/inspector_chromiumrl_agent.cc
 
 #include "third_party/blink/renderer/core/inspector/inspector_chromiumrl_agent.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
-#include "third_party/blink/renderer/bindings/core/v8/v8_font_face.h"
 #include "third_party/blink/renderer/core/css/css_property_name.h"
 
 #include <vector>
@@ -12,6 +10,8 @@
 #include "base/base64.h"
 #include "base/no_destructor.h"
 #include "crypto/sha2.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_mutation_observer_init.h"
+#include "third_party/blink/renderer/core/dom/mutation_record.h"
 #include "third_party/blink/renderer/core/inspector/inspector_dom_agent.h"
 #include "third_party/blink/renderer/core/inspector/protocol/chromium_rl.h"
 #include "third_party/blink/renderer/core/inspector/protocol/protocol.h"
@@ -62,6 +62,9 @@
 #include "third_party/re2/src/re2/re2.h"
 #include "ui/accessibility/ax_enums.mojom-blink.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_font_face.h"
+#include "third_party/blink/renderer/core/dom/layout_tree_builder_traversal.h"
 #include <functional>
 #include <limits>
 #include <map>
@@ -114,8 +117,6 @@ class RendererDOMRecorder final : public GarbageCollected<RendererDOMRecorder>,
   protocol::Response disable();
   void DidCommitLoadForLocalFrame(LocalFrame*);
 
-  protocol::Response StartDiff();
-  void StopDiff();
   void StopDOMObserver();
   void StartDOMObserver();
   void SeedDOMObserver();
@@ -129,7 +130,7 @@ class RendererDOMRecorder final : public GarbageCollected<RendererDOMRecorder>,
   protocol::Response checkpointRecording(std::unique_ptr<renderer_dom::Dict>*);
   bool CheckDocument();
   bool IsRecording() { return CheckDocument(); }
-  void LayoutShift(const CLSTraceEntry&);
+  void LayoutShift(double, bool, const Vector<LayoutShiftTracker::Attribution>&);
 
  private:
   std::unique_ptr<renderer_dom::Dict> Capture(int max_nodes);
@@ -164,7 +165,6 @@ class RendererDOMRecorder final : public GarbageCollected<RendererDOMRecorder>,
   size_t recording_bytes_ = 0;
   HashMap<int, std::unique_ptr<renderer_dom::Dict>> mutation_cache_;
   size_t mutation_cache_bytes_ = 0;
-  bool dom_diff_active_ = false;
   Member<InspectorDOMAgent> dom_agent_;
   std::unique_ptr<InspectorSessionState> dom_state_;
   std::unique_ptr<protocol::UberDispatcher> dom_dispatcher_;
@@ -172,6 +172,7 @@ class RendererDOMRecorder final : public GarbageCollected<RendererDOMRecorder>,
   bool accepting_dom_ = false;
   unsigned dom_callback_depth_ = 0;
 };
+
 
 namespace {
 using AgentMap = GCedHeapHashMap<WeakMember<LocalFrame>, WeakMember<InspectorAgent>>;
@@ -214,8 +215,7 @@ String TruncateStructuredString(const String& value,
 }
 }
 
-InspectorChromiumRLAgent::InspectorChromiumRLAgent(
-    InspectedFrames* inspected_frames)
+InspectorChromiumRLAgent::InspectorChromiumRLAgent(InspectedFrames* inspected_frames)
     : inspected_frames_(inspected_frames),
       trace_buffer_(MakeGarbageCollected<ChromiumRLTraceBuffer>()),
       capture_touch_traces_(&agent_state_, false),
@@ -382,48 +382,20 @@ protocol::Response InspectorChromiumRLAgent::getLayoutTimings(
   return protocol::Response::Success();
 }
 
-namespace {
-double CLSTotal(const Vector<CLSTraceEntry>& entries,
-                const CLSTraceEntry* next = nullptr) {
-  double best = 0, window = 0, first = 0, last = 0;
-  auto add = [&](const CLSTraceEntry& entry) {
-    if (entry.had_recent_input)
-      return;
-    if (!window || entry.timestamp - last >= 1 ||
-        entry.timestamp - first >= 5) {
-      first = entry.timestamp;
-      window = 0;
-    }
-    window += entry.score;
-    last = entry.timestamp;
-    best = std::max(best, window);
-  };
-  for (const auto& entry : entries)
-    add(entry);
-  if (next)
-    add(*next);
-  return best;
-}
-}  // namespace
-
 protocol::Response InspectorChromiumRLAgent::getCLSAttribution(
     std::optional<double> min_shift_score,
     std::unique_ptr<protocol::Array<protocol::ChromiumRL::CLSEntry>>* entries,
     double* total_cls,
     bool* exceeds_good_threshold) {
-  if (min_shift_score &&
-      (!std::isfinite(*min_shift_score) || *min_shift_score < 0))
-    return protocol::Response::InvalidParams(
-        "minShiftScore must be finite and nonnegative");
+  
   *entries = std::make_unique<protocol::Array<protocol::ChromiumRL::CLSEntry>>();
   const auto& stored = trace_buffer_->GetCLSEntries();
   
   for (const auto& entry : stored) {
-    if (entry.score >= min_shift_score.value_or(0))
-      (*entries)->push_back(BuildCLSEntry(entry));
+    (*entries)->push_back(BuildCLSEntry(entry));
   }
-
-  *total_cls = CLSTotal(stored);
+  
+  *total_cls = trace_buffer_->GetTotalCLS();
   *exceeds_good_threshold = *total_cls > 0.1; // Standard threshold
   
   return protocol::Response::Success();
@@ -590,53 +562,43 @@ void InspectorChromiumRLAgent::OnLayoutShift(
     double score,
     bool had_recent_input,
     const Vector<LayoutShiftTracker::Attribution>& attributions) {
-  bool legacy = enabled_.Get() && capture_cls_attribution_.Get();
-  bool recording =
-      renderer_dom_recorder_ && renderer_dom_recorder_->IsRecording();
-  if ((!legacy && !recording) || !std::isfinite(score) || score < 0)
+  // RendererDOM consumes the raw signal independently; legacy handling below
+  // retains its original calculations, buffer and frontend event shape.
+  if (renderer_dom_recorder_)
+    renderer_dom_recorder_->LayoutShift(score, had_recent_input, attributions);
+  if (!enabled_.Get() || !capture_cls_attribution_.Get())
     return;
+
   CLSTraceEntry entry;
   entry.timestamp = base::TimeTicks::Now().since_origin().InSecondsF();
   entry.score = score;
   entry.had_recent_input = had_recent_input;
-  double total_weight = 0;
+
   for (const auto& attribution : attributions) {
     ShiftedElementEntry element;
     element.node_id = static_cast<int>(attribution.node_id);
     element.previous_rect = gfx::RectF(attribution.old_visual_rect);
     element.current_rect = gfx::RectF(attribution.new_visual_rect);
-    const auto& old = element.previous_rect;
-    const auto& now = element.current_rect;
-    element.shift_distance =
-        std::max({std::abs(now.x() - old.x()), std::abs(now.y() - old.y()),
-                  std::abs(now.right() - old.right()),
-                  std::abs(now.bottom() - old.bottom())});
-    auto overlap = gfx::IntersectRects(old, now);
-    double impact_area = old.width() * old.height() +
-                         now.width() * now.height() -
-                         overlap.width() * overlap.height();
-    // A geometric allocation over reported affected elements, not independent
-    // per-element CLS or an inferred JavaScript/CSS root cause.
-    element.score_contribution =
-        std::max(0.0, impact_area) * element.shift_distance;
-    total_weight += element.score_contribution;
-    if (element.node_id) {
-      if (Node* node = DOMNodeIds::NodeForId(element.node_id))
+    // Rough estimate of contribution if not provided
+    element.score_contribution = score / std::max(static_cast<int>(attributions.size()), 1);
+    
+    if (element.node_id != 0) {
+      if (Node* node = DOMNodeIds::NodeForId(element.node_id)) {
         element.selector_path = BuildSelectorPath(node);
+      }
     }
+    
     entry.shifted_elements.push_back(std::move(element));
   }
-  for (auto& element : entry.shifted_elements)
-    element.score_contribution =
-        total_weight > 0 ? score * element.score_contribution / total_weight
-                         : 0;
-  if (recording)
-    renderer_dom_recorder_->LayoutShift(entry);
-  if (legacy) {
-    double cumulative = CLSTotal(trace_buffer_->GetCLSEntries(), &entry);
-    GetFrontend()->layoutShiftDetected(BuildCLSEntry(entry), cumulative);
-    trace_buffer_->AddCLSEntry(std::move(entry));
+
+  // Fire event to frontend
+  if (GetFrontend()) {
+    GetFrontend()->layoutShiftDetected(
+        BuildCLSEntry(entry),
+        trace_buffer_->GetTotalCLS() + entry.score);
   }
+
+  trace_buffer_->AddCLSEntry(std::move(entry));
 }
 
 void InspectorChromiumRLAgent::OnCompositorCommit(const cc::LayerTreeHost* layer_tree_host) {
@@ -660,6 +622,8 @@ void InspectorChromiumRLAgent::Trace(Visitor* visitor) const {
   visitor->Trace(renderer_dom_recorder_);
   visitor->Trace(inspected_frames_);
   visitor->Trace(trace_buffer_);
+  visitor->Trace(dom_diff_observer_);
+  visitor->Trace(dom_diff_delegate_);
   InspectorBaseAgent::Trace(visitor);
 }
 
@@ -718,42 +682,28 @@ std::unique_ptr<protocol::ChromiumRL::CLSEntry>
 InspectorChromiumRLAgent::BuildCLSEntry(const CLSTraceEntry& entry) {
   auto shifted_elements = std::make_unique<protocol::Array<protocol::ChromiumRL::ShiftedElement>>();
   for (const auto& element : entry.shifted_elements) {
-    shifted_elements->push_back(
-        protocol::ChromiumRL::ShiftedElement::create()
-            .setNodeId(element.node_id)
-            .setSelectorPath(element.selector_path)
-            .setPreviousRect(protocol::DOM::Rect::create()
-                                 .setX(element.previous_rect.x())
-                                 .setY(element.previous_rect.y())
-                                 .setWidth(element.previous_rect.width())
-                                 .setHeight(element.previous_rect.height())
-                                 .build())
-            .setCurrentRect(protocol::DOM::Rect::create()
-                                .setX(element.current_rect.x())
-                                .setY(element.current_rect.y())
-                                .setWidth(element.current_rect.width())
-                                .setHeight(element.current_rect.height())
-                                .build())
-            .setShiftDistance(element.shift_distance)
-            .setScoreContribution(element.score_contribution)
-            .setScoreShare(
-                entry.score > 0 ? element.score_contribution / entry.score : 0)
-            .setShareMethod(
-                "impact-area-times-max-edge-distance; reported-elements-only")
-            .build());
+    shifted_elements->push_back(protocol::ChromiumRL::ShiftedElement::create()
+        .setNodeId(element.node_id)
+        .setSelectorPath(element.selector_path)
+        .setPreviousRect(protocol::DOM::Rect::create()
+            .setX(element.previous_rect.x())
+            .setY(element.previous_rect.y())
+            .setWidth(element.previous_rect.width())
+            .setHeight(element.previous_rect.height())
+            .build())
+        .setCurrentRect(protocol::DOM::Rect::create()
+            .setX(element.current_rect.x())
+            .setY(element.current_rect.y())
+            .setWidth(element.current_rect.width())
+            .setHeight(element.current_rect.height())
+            .build())
+        .setShiftDistance(element.shift_distance)
+        .setScoreContribution(element.score_contribution)
+        .build());
   }
   
   auto sources = std::make_unique<protocol::Array<protocol::ChromiumRL::ShiftSource>>();
-  for (const auto& element : entry.shifted_elements) {
-    sources->push_back(protocol::ChromiumRL::ShiftSource::create()
-                           .setSourceType("unknown")
-                           .setNodeId(element.node_id)
-                           .setDescription("Measured affected element: " +
-                                           element.selector_path +
-                                           "; root cause not inferred")
-                           .build());
-  }
-
+  
   return protocol::ChromiumRL::CLSEntry::create()
       .setTimestamp(entry.timestamp)
       .setScore(entry.score)
@@ -949,13 +899,148 @@ String InspectorChromiumRLAgent::GetNodeFingerprint(Node* node) {
 // DOM Diff Implementation
 // ===========================================================================
 
+class InspectorChromiumRLAgent::DOMDiffObserver final
+    : public MutationObserver::Delegate {
+ public:
+  explicit DOMDiffObserver(InspectorChromiumRLAgent* agent) : agent_(agent) {}
+
+  ExecutionContext* GetExecutionContext() const override {
+    return agent_->inspected_frames_->Root()->GetDocument()->GetExecutionContext();
+  }
+
+  void Deliver(const MutationRecordVector& records,
+               MutationObserver&) override {
+    agent_->OnDOMMutation(records);
+  }
+
+  void Trace(Visitor* visitor) const override {
+    visitor->Trace(agent_);
+    MutationObserver::Delegate::Trace(visitor);
+  }
+
+ private:
+  Member<InspectorChromiumRLAgent> agent_;
+};
+
 protocol::Response InspectorChromiumRLAgent::startDOMDiff() {
-  return EnsureRendererDOMRecorder()->StartDiff();
-}
-protocol::Response InspectorChromiumRLAgent::stopDOMDiff() {
-  if (renderer_dom_recorder_)
-    renderer_dom_recorder_->StopDiff();
+  if (dom_diff_observer_)
+    return protocol::Response::Success();
+
+  Document* document = inspected_frames_->Root()->GetDocument();
+  if (!document)
+    return protocol::Response::ServerError("No document to observe");
+
+  dom_diff_delegate_ = MakeGarbageCollected<DOMDiffObserver>(this);
+  dom_diff_observer_ = MutationObserver::Create(dom_diff_delegate_);
+
+  MutationObserverInit* init = MutationObserverInit::Create();
+  init->setChildList(true);
+  init->setAttributes(true);
+  init->setCharacterData(true);
+  init->setSubtree(true);
+  init->setAttributeOldValue(true);
+  init->setCharacterDataOldValue(true);
+
+  dom_diff_observer_->observe(document, init, ASSERT_NO_EXCEPTION);
+
   return protocol::Response::Success();
+}
+
+protocol::Response InspectorChromiumRLAgent::stopDOMDiff() {
+  if (dom_diff_observer_) {
+    dom_diff_observer_->disconnect();
+    dom_diff_observer_ = nullptr;
+    dom_diff_delegate_ = nullptr;
+  }
+  return protocol::Response::Success();
+}
+
+void InspectorChromiumRLAgent::OnDOMMutation(
+    const HeapVector<Member<MutationRecord>>& records) {
+  auto diff =
+      std::make_unique<protocol::Array<protocol::ChromiumRL::NodeDiff>>();
+
+  for (const auto& record : records) {
+    Node* target = record->target();
+    if (!target)
+      continue;
+
+    int node_id = IdentifiersFactory::IntIdForNode(target);
+    String selector_path = BuildSelectorPath(target);
+
+    auto node_diff = protocol::ChromiumRL::NodeDiff::create()
+                         .setNodeId(node_id)
+                         .setSelectorPath(selector_path)
+                         .build();
+
+    bool has_change = false;
+
+    if (record->type() == "attributes") {
+      if (auto* element = DynamicTo<Element>(target)) {
+        auto attr_mods = std::make_unique<
+            protocol::Array<protocol::ChromiumRL::AttributeModification>>();
+        attr_mods->push_back(
+            protocol::ChromiumRL::AttributeModification::create()
+                .setName(record->attributeName())
+                .setOldValue(record->oldValue())
+                .setNewValue(element->getAttribute(record->attributeName()))
+                .build());
+        node_diff->setAttributeModifications(std::move(attr_mods));
+        has_change = true;
+      }
+    } else if (record->type() == "characterData") {
+      node_diff->setCharacterDataModification(
+          protocol::ChromiumRL::CharacterDataModification::create()
+              .setOldData(record->oldValue())
+              .setNewData(target->nodeValue())
+              .build());
+      has_change = true;
+    } else if (record->type() == "childList") {
+      // Handle added nodes
+      if (record->addedNodes() && record->addedNodes()->length() > 0) {
+        auto added = std::make_unique<protocol::Array<protocol::ChromiumRL::NodeStructure>>();
+        for (unsigned i = 0; i < record->addedNodes()->length(); i++) {
+          Node* node = record->addedNodes()->item(i);
+          auto structure = protocol::ChromiumRL::NodeStructure::create()
+              .setNodeId(IdentifiersFactory::IntIdForNode(node))
+              .setNodeName(node->nodeName())
+              .build();
+          if (node->nodeValue()) {
+              structure->setNodeValue(node->nodeValue());
+          }
+          added->push_back(std::move(structure));
+        }
+        node_diff->setAddedNodes(std::move(added));
+        has_change = true;
+      }
+
+      // Handle removed nodes
+      if (record->removedNodes() && record->removedNodes()->length() > 0) {
+        auto removed = std::make_unique<protocol::Array<protocol::ChromiumRL::NodeStructure>>();
+        for (unsigned i = 0; i < record->removedNodes()->length(); i++) {
+          Node* node = record->removedNodes()->item(i);
+          auto structure = protocol::ChromiumRL::NodeStructure::create()
+              .setNodeId(IdentifiersFactory::IntIdForNode(node))
+              .setNodeName(node->nodeName())
+              .build();
+          if (node->nodeValue()) {
+              structure->setNodeValue(node->nodeValue());
+          }
+          removed->push_back(std::move(structure));
+        }
+        node_diff->setRemovedNodes(std::move(removed));
+        has_change = true;
+      }
+    }
+
+    if (has_change) {
+      diff->push_back(std::move(node_diff));
+    }
+  }
+
+  if (diff->size() > 0 && GetFrontend()) {
+    GetFrontend()->domDiffOccurred(std::move(diff));
+  }
 }
 
 // ===========================================================================
@@ -1327,30 +1412,6 @@ InspectorChromiumRLAgent::BuildLightweightNode(Node* node) {
   return rich_node;
 }
 
-namespace {
-gfx::RectF ReadNodeBounds(Node* node) {
-  return node->GetLayoutObject()
-             ? node->GetLayoutObject()->AbsoluteBoundingBoxRectF()
-             : gfx::RectF();
-}
-std::unique_ptr<protocol::Array<protocol::ChromiumRL::DOMAttribute>>
-ReadNodeAttributes(Element* element, unsigned cap, bool* truncated) {
-  auto attributes =
-      std::make_unique<protocol::Array<protocol::ChromiumRL::DOMAttribute>>();
-  for (const auto& attribute : element->Attributes()) {
-    if (attributes->size() == cap) {
-      *truncated = true;
-      break;
-    }
-    attributes->push_back(protocol::ChromiumRL::DOMAttribute::create()
-                              .setName(attribute.GetName().ToString())
-                              .setValue(attribute.Value())
-                              .build());
-  }
-  return attributes;
-}
-}  // namespace
-
 std::unique_ptr<protocol::ChromiumRL::RichNode> 
 InspectorChromiumRLAgent::BuildRichNode(Node* node) {
   int node_id = IdentifiersFactory::IntIdForNode(node);
@@ -1382,7 +1443,7 @@ InspectorChromiumRLAgent::BuildRichNode(Node* node) {
   auto bounds = protocol::DOM::Rect::create().setX(0).setY(0).setWidth(0).setHeight(0).build();
   bool is_in_viewport = false;
   if (node->GetLayoutObject()) {
-    gfx::RectF box = ReadNodeBounds(node);
+    gfx::RectF box = node->GetLayoutObject()->AbsoluteBoundingBoxRectF();
     bounds->setX(box.x());
     bounds->setY(box.y());
     bounds->setWidth(box.width());
@@ -1450,9 +1511,13 @@ InspectorChromiumRLAgent::BuildRichNode(Node* node) {
   }
 
   if (auto* element = DynamicTo<Element>(node)) {
-    bool truncated = false;
-    auto attributes = ReadNodeAttributes(
-        element, std::numeric_limits<unsigned>::max(), &truncated);
+    auto attributes = std::make_unique<protocol::Array<protocol::ChromiumRL::DOMAttribute>>();
+    for (const auto& attr : element->Attributes()) {
+      attributes->push_back(protocol::ChromiumRL::DOMAttribute::create()
+        .setName(attr.GetName().ToString())
+        .setValue(attr.Value())
+        .build());
+    }
     rich_node->setAttributes(std::move(attributes));
     
     if (const ComputedStyle* style = element->GetComputedStyle()) {
@@ -2510,9 +2575,6 @@ protocol::Response InspectorChromiumRLAgent::compareDOMState(
 }
 
 String InspectorChromiumRLAgent::GetAriaRoleName(Element* element) {
-  if (auto* cache = element->GetDocument().ExistingAXObjectCache();
-      cache && element->GetDocument().Lifecycle().GetState() >= DocumentLifecycle::kLayoutClean)
-    return cache->ComputedRoleForNode(element);
   // Check explicit ARIA role first
   const AtomicString& aria_role = element->FastGetAttribute(html_names::kRoleAttr);
   if (!aria_role.IsNull()) {
@@ -2674,10 +2736,10 @@ String InspectorChromiumRLAgent::GetAccessibleName(Node* node) {
     return String();
 
   Document& document = node->GetDocument();
-  if (AXObjectCache* cache = document.ExistingAXObjectCache();
-      cache && document.Lifecycle().GetState() >= DocumentLifecycle::kLayoutClean) {
+  if (AXObjectCache* cache = document.ExistingAXObjectCache()) {
     String computed_name = NormalizeTextContent(cache->ComputedNameForNode(node));
-    return computed_name;
+    if (!computed_name.empty())
+      return computed_name;
   }
 
   if (auto* element = DynamicTo<Element>(node)) {
@@ -3679,8 +3741,6 @@ protocol::Response InspectorChromiumRLAgent::captureStructuredSnapshot(
     }
   }
 
-  AXContext ax_context(*document, ui::kAXModeComplete);
-  document->UpdateStyleAndLayout(DocumentUpdateReason::kInspector);
   Node* root = document;
   if (root_selector.has_value() && !root_selector->empty()) {
     if (Element* el =
@@ -9086,6 +9146,63 @@ protocol::Response Model(Dict* diff,
 }  // namespace blink::renderer_dom
 
 namespace blink {
+namespace {
+// getComputedStyle can install ensured styles on non-rendered nodes and their
+// ancestors. Legacy snapshot commands distinguish a null cache from such styles.
+// Discard only initially absent, non-layout ensured caches created by this read;
+// never replace a rendered style or alter page attributes/layout flags.
+class RendererDOMStyleCacheScope {
+  STACK_ALLOCATED();
+ public:
+  explicit RendererDOMStyleCacheScope(Node* node) {
+    auto* element = DynamicTo<Element>(node);
+    for (unsigned depth = 0; element && depth < 64; ++depth) {
+      const auto* style = element->GetComputedStyle();
+      if (!style)
+        initially_absent_.push_back(element);
+      else if (!style->IsEnsuredOutsideFlatTree())
+        break;
+      element = LayoutTreeBuilderTraversal::ParentElement(*element);
+    }
+    complete_ = !element || (element->GetComputedStyle() &&
+                             !element->GetComputedStyle()->IsEnsuredOutsideFlatTree());
+  }
+  ~RendererDOMStyleCacheScope() {
+    for (auto& element : initially_absent_) {
+      if (!element->GetLayoutObject() &&
+          ComputedStyle::IsNullOrEnsured(element->GetComputedStyle()))
+        element->SetComputedStyle(nullptr);
+    }
+  }
+  bool Complete() const { return complete_; }
+ private:
+  HeapVector<Member<Element>> initially_absent_;
+  bool complete_ = false;
+};
+
+gfx::RectF RendererDOMReadNodeBounds(Node* node) {
+  return node->GetLayoutObject()
+             ? node->GetLayoutObject()->AbsoluteBoundingBoxRectF()
+             : gfx::RectF();
+}
+std::unique_ptr<protocol::Array<protocol::ChromiumRL::DOMAttribute>>
+RendererDOMReadNodeAttributes(Element* element, unsigned cap, bool* truncated) {
+  auto attributes =
+      std::make_unique<protocol::Array<protocol::ChromiumRL::DOMAttribute>>();
+  for (const auto& attribute : element->Attributes()) {
+    if (attributes->size() == cap) {
+      *truncated = true;
+      break;
+    }
+    attributes->push_back(protocol::ChromiumRL::DOMAttribute::create()
+                              .setName(attribute.GetName().ToString())
+                              .setValue(attribute.Value())
+                              .build());
+  }
+  return attributes;
+}
+}  // namespace
+
 using renderer_dom::Dict;
 using renderer_dom::List;
 using renderer_dom::StringField;
@@ -9279,6 +9396,9 @@ std::unique_ptr<Dict> RendererDOMRecorder::CaptureNode(Node* node,
                                                        const String& scope,
                                                        bool full,
                                                        bool* truncated) {
+  RendererDOMStyleCacheScope style_cache_scope(full ? node : nullptr);
+  if (!style_cache_scope.Complete())
+    *truncated = true;
   auto d = Dict::create();
   d->setString("position", position);
   d->setString("tag", Cap(node->nodeName(), truncated));
@@ -9309,7 +9429,7 @@ std::unique_ptr<Dict> RendererDOMRecorder::CaptureNode(Node* node,
   d->setString("text", text);
   if (auto* e = DynamicTo<Element>(node)) {
     std::map<std::string, String> sorted;
-    auto attributes = ReadNodeAttributes(e, kAttributes, truncated);
+    auto attributes = RendererDOMReadNodeAttributes(e, kAttributes, truncated);
     for (const auto& attribute : *attributes)
       sorted.emplace(attribute->getName().Utf8(), attribute->getValue());
     for (const auto& [name, value] : sorted) {
@@ -9324,8 +9444,13 @@ std::unique_ptr<Dict> RendererDOMRecorder::CaptureNode(Node* node,
     // Snapshot capture creates an AXContext; mutation hooks never flush AX or
     // layout.
     if (full) {
-      role = chromiumrl_agent_->GetAriaRoleName(e);
-      name = chromiumrl_agent_->GetAccessibleName(e);
+      if (auto* cache = e->GetDocument().ExistingAXObjectCache()) {
+        role = cache->ComputedRoleForNode(e);
+        name = chromiumrl_agent_->NormalizeTextContent(cache->ComputedNameForNode(e));
+      } else {
+        role = chromiumrl_agent_->GetAriaRoleName(e);
+        name = chromiumrl_agent_->GetAccessibleName(e);
+      }
     } else {
       role = e->getAttribute(AtomicString("role"));
       name = e->getAttribute(AtomicString("aria-label"));
@@ -9394,7 +9519,7 @@ std::unique_ptr<Dict> RendererDOMRecorder::CaptureNode(Node* node,
       image_state->setBoolean("complete", image->complete());
       d->setObject("image", std::move(image_state));
     }
-    if (full) {
+    if (full && style_cache_scope.Complete()) {
       auto* computed = MakeGarbageCollected<CSSComputedStyleDeclaration>(e);
       // ScopedCleanStyleForAllProperties avoids repeated layout flushes.
       CSSComputedStyleDeclaration::ScopedCleanStyleForAllProperties clean(
@@ -9422,7 +9547,7 @@ std::unique_ptr<Dict> RendererDOMRecorder::CaptureNode(Node* node,
   if (full) {
     d->setBoolean("hasLayout", !!node->GetLayoutObject());
     if (node->GetLayoutObject()) {
-      auto box = ReadNodeBounds(node);
+      auto box = RendererDOMReadNodeBounds(node);
       d->setObject("geometry",
                    Rect(box.x(), box.y(), box.width(), box.height()));
     }
@@ -9589,9 +9714,9 @@ std::unique_ptr<Dict> RendererDOMRecorder::Capture(int max_nodes) {
   coverage->setBoolean("commentsIncluded", include_comments_);
   coverage->setString(
       "mutationProvenance",
-      "shared-native-DOM-probes; deferred-style-initiators-unavailable");
+      "RendererDOM-native-DOM-notifications; deferred-style-initiators-unavailable");
   coverage->setString(
-      "mutations", "shared-native-DOM-notifications-with-bounded-old-values");
+      "mutations", "independent-native-DOM-notifications-with-bounded-old-values");
   coverage->setString("CSSOM", "sampled-not-synchronous");
   coverage->setString("pixels", "not-captured");
   coverage->setString("pseudoElements", "not-captured");
@@ -9633,8 +9758,7 @@ protocol::Response RendererDOMRecorder::startRecording(
     std::unique_ptr<Dict>* recording) {
   if (active_)
     return protocol::Response::ServerError("Recording already active");
-  if (!dom_diff_active_)
-    StopDOMObserver();
+  StopDOMObserver();
   if (!inspected_frames_->Root()->GetDocument())
     return protocol::Response::ServerError("No document");
   int n = max_nodes.value_or(500), e = max_events.value_or(4000);
@@ -9701,20 +9825,7 @@ void RendererDOMRecorder::StopDOMObserver() {
 }
 void RendererDOMRecorder::Detach() {
   active_ = false;
-  if (!dom_diff_active_)
-    StopDOMObserver();
-}
-protocol::Response RendererDOMRecorder::StartDiff() {
-  if (!inspected_frames_->Root()->GetDocument())
-    return protocol::Response::ServerError("No document to observe");
-  dom_diff_active_ = true;
-  StartDOMObserver();
-  return protocol::Response::Success();
-}
-void RendererDOMRecorder::StopDiff() {
-  dom_diff_active_ = false;
-  if (!active_)
-    StopDOMObserver();
+  StopDOMObserver();
 }
 protocol::Response RendererDOMRecorder::disable() {
   Detach();
@@ -9786,72 +9897,6 @@ void RendererDOMRecorder::Mutation(const char* type,
                                    std::unique_ptr<Dict> source) {
   if (!node)
     return;
-  // The legacy stream and the durable recording share this single delivery.
-  // Legacy node IDs remain live-session references, never cross-version keys.
-  if (dom_diff_active_) {
-    Node* target = (String(type) == "insert" || String(type) == "remove")
-                       ? node->parentNode()
-                       : node;
-    if (target) {
-      auto diff =
-          std::make_unique<protocol::Array<protocol::ChromiumRL::NodeDiff>>();
-      auto item =
-          protocol::ChromiumRL::NodeDiff::create()
-              .setNodeId(IdentifiersFactory::IntIdForNode(target))
-              .setSelectorPath(chromiumrl_agent_->BuildSelectorPath(target))
-              .build();
-      auto initiator =
-          protocol::ChromiumRL::MutationInitiator::create()
-              .setAvailable(source->booleanProperty("available", false))
-              .build();
-      if (source->booleanProperty("available", false)) {
-        initiator->setUrl(StringField(source.get(), "url"));
-        initiator->setLine(source->integerProperty("line", -1));
-        initiator->setColumn(source->integerProperty("column", -1));
-        initiator->setFunction(StringField(source.get(), "function"));
-      } else {
-        initiator->setReason(StringField(source.get(), "reason"));
-      }
-      item->setInitiator(std::move(initiator));
-      bool clipped = false;
-      if (String(type) == "attribute") {
-        auto attributes = std::make_unique<
-            protocol::Array<protocol::ChromiumRL::AttributeModification>>();
-        attributes->push_back(
-            protocol::ChromiumRL::AttributeModification::create()
-                .setName(Cap(name, &clipped))
-                .setOldValue(Cap(old_value ? *old_value : String(), &clipped))
-                .setNewValue(Cap(value, &clipped))
-                .build());
-        item->setAttributeModifications(std::move(attributes));
-      } else if (String(type) == "text") {
-        item->setCharacterDataModification(
-            protocol::ChromiumRL::CharacterDataModification::create()
-                .setOldData(Cap(old_value ? *old_value : String(), &clipped))
-                .setNewData(Cap(value, &clipped))
-                .build());
-      } else {
-        auto children = std::make_unique<
-            protocol::Array<protocol::ChromiumRL::NodeStructure>>();
-        children->push_back(
-            protocol::ChromiumRL::NodeStructure::create()
-                .setNodeId(IdentifiersFactory::IntIdForNode(node))
-                .setNodeName(node->nodeName())
-                .setNodeValue(Cap(node->nodeValue(), &clipped))
-                .build());
-        if (String(type) == "insert")
-          item->setAddedNodes(std::move(children));
-        else
-          item->setRemovedNodes(std::move(children));
-        if (clipped)
-          item->setTruncated(true);
-      }
-      if (clipped)
-        item->setTruncated(true);
-      diff->push_back(std::move(item));
-      chromiumrl_agent_->GetFrontend()->domDiffOccurred(std::move(diff));
-    }
-  }
   if (!CanRecord() || !node ||
       ((node->getNodeType() == Node::kCommentNode) && !include_comments_) ||
       !inspected_frames_->Contains(node->GetDocument().GetFrame()))
@@ -9908,12 +9953,9 @@ bool RendererDOMRecorder::CheckDocument() {
     recording_->setString("endedReason", "document-changed");
     recording_->setDouble(
         "durationMs", (base::TimeTicks::Now() - started_).InMillisecondsF());
-    if (!dom_diff_active_) {
-      accepting_dom_ = false;
-      if (dom_agent_)
-        chromiumrl_agent_->instrumenting_agents_->RemoveInspectorDOMAgent(
-            dom_agent_);
-    }
+    accepting_dom_ = false;
+    if (dom_agent_)
+      chromiumrl_agent_->instrumenting_agents_->RemoveInspectorDOMAgent(dom_agent_);
   }
   return active_;
 }
@@ -9932,29 +9974,62 @@ protocol::Response RendererDOMRecorder::checkpointRecording(
   return protocol::Response::Success();
 }
 
-void RendererDOMRecorder::LayoutShift(const CLSTraceEntry& entry) {
-  if (!CanRecord())
+void RendererDOMRecorder::LayoutShift(
+    double score, bool had_recent_input,
+    const Vector<LayoutShiftTracker::Attribution>& attributions) {
+  if (!CanRecord() || !std::isfinite(score) || score < 0)
     return;
-  auto wire = chromiumrl_agent_->BuildCLSEntry(entry)->Serialize();
-  auto event =
-      Dict::cast(renderer_dom::Value::parseBinary(wire.data(), wire.size()));
+  // These measurements and allocations belong only to RendererDOM. Do not use
+  // or modify the legacy CLSTraceEntry buffer or protocol::ChromiumRL builders.
+  auto event = Dict::create();
   event->setString("type", "layoutShift");
-  event->remove("timestamp");
-  event->remove("sessionWindowId");
-  // Live CDP node IDs are replaced with stable, serializable target facts.
+  event->setDouble("score", score);
+  event->setBoolean("hadRecentInput", had_recent_input);
+  auto shifted = List::create(), sources = List::create();
   bool truncated = false;
-  auto* shifted = event->getArray("shiftedElements");
+  double total_weight = 0;
+  for (const auto& attribution : attributions) {
+    const gfx::RectF old(attribution.old_visual_rect);
+    const gfx::RectF now(attribution.new_visual_rect);
+    double distance = std::max({std::abs(now.x() - old.x()),
+                               std::abs(now.y() - old.y()),
+                               std::abs(now.right() - old.right()),
+                               std::abs(now.bottom() - old.bottom())});
+    auto overlap = gfx::IntersectRects(old, now);
+    double impact_area = old.width() * old.height() + now.width() * now.height() -
+                         overlap.width() * overlap.height();
+    double weight = std::max(0.0, impact_area) * distance;
+    total_weight += weight;
+    auto item = Dict::create();
+    item->setObject("previousRect", Rect(old.x(), old.y(), old.width(), old.height()));
+    item->setObject("currentRect", Rect(now.x(), now.y(), now.width(), now.height()));
+    item->setDouble("shiftDistance", distance);
+    item->setDouble("scoreContribution", weight);
+    item->setString("shareMethod", "impact-area-times-max-edge-distance; reported-elements-only");
+    String selector;
+    if (Node* node = DOMNodeIds::NodeForId(static_cast<int>(attribution.node_id))) {
+      selector = chromiumrl_agent_->BuildSelectorPath(node);
+      item->setObject("target", CaptureNode(node, Position(node), IdentityScope(node),
+                                            false, &truncated));
+    }
+    item->setString("selectorPath", Cap(selector, &truncated));
+    shifted->pushValue(std::move(item));
+    auto source = Dict::create();
+    source->setString("sourceType", "unknown");
+    source->setString("description", Cap("Measured affected element: " + selector +
+                                           "; root cause not inferred", &truncated));
+    sources->pushValue(std::move(source));
+  }
   for (size_t i = 0; i < shifted->size(); ++i) {
     auto* item = Dict::cast(shifted->at(i));
-    if (Node* node = DOMNodeIds::NodeForId(item->integerProperty("nodeId", 0)))
-      item->setObject("target",
-                      CaptureNode(node, Position(node), IdentityScope(node),
-                                  false, &truncated));
-    item->remove("nodeId");
+    double weight = 0;
+    item->getDouble("scoreContribution", &weight);
+    double share = total_weight > 0 ? weight / total_weight : 0;
+    item->setDouble("scoreContribution", score * share);
+    item->setDouble("scoreShare", score > 0 ? share : 0);
   }
-  auto* sources = event->getArray("sources");
-  for (size_t i = 0; i < sources->size(); ++i)
-    Dict::cast(sources->at(i))->remove("nodeId");
+  event->setArray("shiftedElements", std::move(shifted));
+  event->setArray("sources", std::move(sources));
   event->setBoolean("truncated", truncated);
   AddEvent(std::move(event));
 }
@@ -9983,23 +10058,13 @@ void RendererDOMRecorder::SuspendDOMObserver() {
     recording_->setBoolean("truncated", true);
     recording_->setBoolean("mutationSourceTruncated", true);
   }
-  if (dom_diff_active_) {
-    auto diff =
-        std::make_unique<protocol::Array<protocol::ChromiumRL::NodeDiff>>();
-    diff->push_back(protocol::ChromiumRL::NodeDiff::create()
-                        .setNodeId(0)
-                        .setSelectorPath("")
-                        .setTruncated(true)
-                        .build());
-    chromiumrl_agent_->GetFrontend()->domDiffOccurred(std::move(diff));
-  }
   // Stop callbacks immediately without destroying maps used by the current
   // callback. AgentRegistry explicitly supports removal while iterating.
   chromiumrl_agent_->instrumenting_agents_->RemoveInspectorDOMAgent(dom_agent_);
 }
 
 void RendererDOMRecorder::SeedDOMObserver() {
-  if (!accepting_dom_ || (!CheckDocument() && !dom_diff_active_))
+  if (!accepting_dom_ || !CheckDocument())
     return;
   followed_dom_nodes_.clear();
   mutation_cache_.clear();
@@ -10078,10 +10143,10 @@ void RendererDOMRecorder::FollowDOMNode(Dict* description, unsigned depth) {
 
 void RendererDOMRecorder::SendProtocolNotification(
     std::unique_ptr<protocol::Serializable> message) {
-  if (!accepting_dom_ || (!CheckDocument() && !dom_diff_active_) || capturing_)
+  if (!accepting_dom_ || !CheckDocument() || capturing_)
     return;
   if (dom_callback_depth_ >= 64 ||
-      (active_ && !CanRecord() && !dom_diff_active_)) {
+      (active_ && !CanRecord())) {
     SuspendDOMObserver();
     return;
   }
@@ -10221,7 +10286,6 @@ void InspectorChromiumRLAgent::RendererDOMDidCommitLoad(LocalFrame* frame) {
 void InspectorChromiumRLAgent::Dispose() {
   // Session disposal discards this document-scoped recording.
   if (renderer_dom_recorder_) {
-    renderer_dom_recorder_->StopDiff();
     renderer_dom_recorder_->disable();
   }
   renderer_dom_recorder_ = nullptr;

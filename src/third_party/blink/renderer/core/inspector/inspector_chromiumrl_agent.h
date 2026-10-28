@@ -14,6 +14,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/layout/layout_shift_tracker.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/core/dom/mutation_observer.h"
 #include "third_party/blink/renderer/core/inspector/chromiumrl_trace_buffer.h"
 #include "third_party/blink/renderer/core/inspector/inspector_session_state.h"
 
@@ -53,6 +54,7 @@ class RendererDOMRecorder;
 
 class CORE_EXPORT InspectorChromiumRLAgent final
     : public InspectorBaseAgent<protocol::ChromiumRL::Metainfo> {
+  class DOMDiffObserver;
   friend class RendererDOMRecorder;
 
  public:
@@ -217,6 +219,7 @@ class CORE_EXPORT InspectorChromiumRLAgent final
                      bool had_recent_input,
                      const Vector<LayoutShiftTracker::Attribution>& attributions);
   void OnCompositorCommit(const cc::LayerTreeHost* layer_tree_host);
+  void OnDOMMutation(const HeapVector<Member<MutationRecord>>& records);
 
   static InspectorChromiumRLAgent* GetAgentForFrame(LocalFrame* frame);
 
@@ -337,8 +340,10 @@ class CORE_EXPORT InspectorChromiumRLAgent final
   InspectorAgentState::Boolean capture_cls_attribution_;
   InspectorAgentState::Boolean capture_compositor_layers_;
   int last_source_frame_number_ = 0;
-  InspectorAgentState::Boolean enabled_;
+  InspectorAgentState::Boolean enabled_; 
 
+  Member<MutationObserver> dom_diff_observer_;
+  Member<DOMDiffObserver> dom_diff_delegate_;
   std::unique_ptr<protocol::ChromiumRL::RichDOMState> agent_observation_baseline_;
 };
 
