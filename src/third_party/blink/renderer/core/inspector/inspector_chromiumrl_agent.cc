@@ -18,6 +18,7 @@
 #include "third_party/blink/renderer/core/dom/dom_node_ids.h"
 #include "third_party/blink/renderer/core/inspector/identifiers_factory.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/core/layout/layout_box_model_object.h"
 #include "third_party/blink/renderer/core/css/css_computed_style_declaration.h"
 #include "third_party/blink/renderer/core/dom/node_traversal.h"
@@ -45,6 +46,7 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/paint/timing/paint_timing.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
+#include "third_party/blink/renderer/core/html/forms/html_label_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_text_area_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_option_element.h"
@@ -102,6 +104,90 @@ String TruncateStructuredString(const String& value,
     return normalized.substr(0, max_chars);
   }
   return normalized;
+}
+
+// A long leaf text block can span many viewports. Its first 500 characters
+// are not evidence of the part currently on screen. Use Blink's painted text
+// boxes and DOM offsets instead; this applies to prose, code and JSON alike.
+// Ordinary nodes and non-viewport captures retain their existing extraction.
+bool VisibleLeafText(Node* node, String* result) {
+  if (!node->IsElementNode() || node->nodeName() == "HTML" ||
+      node->nodeName() == "BODY")
+    return false;
+  unsigned source_length = 0;
+  for (Node* child = node->firstChild(); child; child = child->nextSibling()) {
+    if (child->IsElementNode())
+      return false;
+    if (child->IsTextNode())
+      source_length += child->nodeValue().length();
+  }
+  if (source_length <= kStructuredMaxSubtreeTextChars)
+    return false;
+
+  StringBuilder visible;
+  for (Node* child = node->firstChild(); child; child = child->nextSibling()) {
+    auto* layout = DynamicTo<LayoutText>(child->GetLayoutObject());
+    if (!child->IsTextNode() || !layout)
+      continue;
+    const String source = child->nodeValue();
+    Vector<std::pair<unsigned, unsigned>> ranges;
+    auto add_range = [&](unsigned start, unsigned end) {
+      if (!ranges.empty() && ranges.back().second == start)
+        ranges.back().second = end;
+      else
+        ranges.push_back(std::make_pair(start, end));
+    };
+    auto visit_range = [&](auto&& self, unsigned start, unsigned end) -> void {
+      if (start >= end)
+        return;
+      Vector<gfx::QuadF> quads;
+      layout->AbsoluteQuadsForRange(quads, start, end);
+      bool intersects = false;
+      bool fully_visible = !quads.empty();
+      for (const gfx::QuadF& quad : quads) {
+        PhysicalRect absolute = PhysicalRect::EnclosingRect(quad.BoundingBox());
+        PhysicalRect clipped = layout->AbsoluteToLocalRect(absolute);
+        if (!layout->MapToVisualRectInAncestorSpace(nullptr, clipped)) {
+          fully_visible = false;
+          continue;
+        }
+        intersects = true;
+        fully_visible &= clipped.Contains(absolute);
+      }
+      if (!intersects)
+        return;
+      if (fully_visible || end - start == 1 ||
+          (end - start == 2 && U16_IS_LEAD(source[start]) &&
+           U16_IS_TRAIL(source[start + 1]))) {
+        add_range(start, end);
+        return;
+      }
+      unsigned middle = start + (end - start) / 2;
+      if (middle > start && U16_IS_TRAIL(source[middle]) &&
+          U16_IS_LEAD(source[middle - 1]))
+        --middle;
+      if (middle == start)
+        middle += 2;
+      self(self, start, middle);
+      self(self, middle, end);
+    };
+    for (const auto& box : layout->GetTextBoxInfo()) {
+      PhysicalRect clipped = box.local_rect;
+      if (!layout->MapToVisualRectInAncestorSpace(nullptr, clipped))
+        continue;
+      const unsigned start = std::min(box.dom_start_offset, source.length());
+      const unsigned end = std::min(start + box.dom_length, source.length());
+      visit_range(visit_range, start, end);
+    }
+    // Never splice separated visible pieces into a fictitious adjacent token.
+    for (const auto& range : ranges) {
+      if (visible.length())
+        visible.Append(" ");
+      visible.Append(source.substr(range.first, range.second - range.first));
+    }
+  }
+  *result = visible.ToString();
+  return true;
 }
 }
 
@@ -2593,9 +2679,12 @@ bool InspectorChromiumRLAgent::IsElementInViewport(const gfx::RectF& box,
   if (box.width() <= 0 || box.height() <= 0)
     return false;
 
+  // AbsoluteBoundingBoxRectF is expressed in the viewport coordinate space.
+  // scroll_top belongs to the document coordinate space, so mixing it into
+  // this comparison classifies every bottom-of-page node as offscreen.
+  (void)scroll_top;
   return box.right() >= -100 && box.x() <= viewport_width + 100 &&
-         box.bottom() >= scroll_top - 100 &&
-         box.y() <= scroll_top + viewport_height + 100;
+         box.bottom() >= -100 && box.y() <= viewport_height + 100;
 }
 
 bool InspectorChromiumRLAgent::IsElementHitTestable(Element* element,
@@ -3332,6 +3421,13 @@ InspectorChromiumRLAgent::CollectNodeStates(Element* element) {
                           .build());
   };
 
+  // Record the visual distinction, not an inferred meaning such as "false".
+  if (const ComputedStyle* style = element->GetComputedStyle()) {
+    if (EnumHasFlags(style->TextDecorationsInEffect(),
+                     TextDecorationLine::kLineThrough))
+      add_state("strikethrough", "true");
+  }
+
   const AtomicString& expanded =
       element->FastGetAttribute(html_names::kAriaExpandedAttr);
   if (!expanded.IsNull())
@@ -3340,6 +3436,22 @@ InspectorChromiumRLAgent::CollectNodeStates(Element* element) {
       element->FastGetAttribute(html_names::kAriaSelectedAttr);
   if (!selected.IsNull())
     add_state("selected", selected == "true" ? "true" : "false");
+
+  // Native controls and custom ARIA controls expose their active state through
+  // different standard attributes. Preserve both rather than inferring state
+  // from a label, count, or the action that preceded this snapshot.
+  const AtomicString& aria_checked =
+      element->FastGetAttribute(html_names::kAriaCheckedAttr);
+  if (!aria_checked.IsNull() && !aria_checked.empty())
+    add_state("checked", aria_checked);
+  const AtomicString& aria_pressed =
+      element->FastGetAttribute(html_names::kAriaPressedAttr);
+  if (!aria_pressed.IsNull() && !aria_pressed.empty())
+    add_state("pressed", aria_pressed);
+  const AtomicString& aria_current =
+      element->FastGetAttribute(html_names::kAriaCurrentAttr);
+  if (!aria_current.IsNull() && !aria_current.empty())
+    add_state("current", aria_current);
 
   if (element->FastHasAttribute(html_names::kDisabledAttr))
     add_state("disabled", "true");
@@ -3358,8 +3470,37 @@ InspectorChromiumRLAgent::CollectNodeStates(Element* element) {
   if (auto* input = DynamicTo<HTMLInputElement>(element)) {
     const AtomicString& input_type =
         input->FastGetAttribute(html_names::kTypeAttr);
-    if (input_type == "checkbox" || input_type == "radio")
+    if ((input_type == "checkbox" || input_type == "radio") &&
+        aria_checked.IsNull()) {
       add_state("checked", input->Checked() ? "true" : "false");
+    }
+  }
+  if (auto* select = DynamicTo<HTMLSelectElement>(element)) {
+    String value = select->Value();
+    if (!value.empty())
+      add_state("value", value);
+  }
+
+  // A visible <label> is the user-facing representation of its associated
+  // native control. Preserve a positive checkbox or radio state on that
+  // already selected label instead of inferring it from text or an action.
+  // This reads the DOM relationship directly and never adds offscreen nodes.
+  if (auto* label = DynamicTo<HTMLLabelElement>(element)) {
+    if (HTMLElement* control = label->Control()) {
+      if (auto* input = DynamicTo<HTMLInputElement>(control)) {
+        const AtomicString& input_type =
+            input->FastGetAttribute(html_names::kTypeAttr);
+        if ((input_type == "checkbox" || input_type == "radio") &&
+            input->Checked()) {
+          add_state("checked", "true");
+        }
+      }
+      if (auto* select = DynamicTo<HTMLSelectElement>(control)) {
+        String value = select->Value();
+        if (!value.empty())
+          add_state("value", value);
+      }
+    }
   }
 
   return states;
@@ -3867,6 +4008,23 @@ protocol::Response InspectorChromiumRLAgent::captureStructuredSnapshot(
         candidate.source_order, candidate.css_box, candidate.visible,
         candidate.in_viewport, candidate.hit_testable, candidate.scrollable,
         repeated_group_id, repeated_item_index, text_limit);
+    String visible_text;
+    if (!allow_offscreen && VisibleLeafText(node, &visible_text)) {
+      bool truncated = false;
+      visible_text = NormalizeTextContent(visible_text);
+      page_node->setSubtreeText(
+          TruncateStructuredString(visible_text, text_limit, &truncated));
+      page_node->setDirectText(TruncateStructuredString(
+          visible_text, kStructuredMaxDirectTextChars, &truncated));
+      // The document is only partially represented even if this viewport fits
+      // the text budget. Keep that omission visible to snapshot consumers.
+      page_node->setTruncated(true);
+      page_node->getStates()->push_back(
+          protocol::ChromiumRL::NodeState::create()
+              .setName("textScope")
+              .setValue("viewport")
+              .build());
+    }
     if (page_node->hasDirectText())
       total_text_chars += page_node->getDirectText("").length();
     if (page_node->hasSubtreeText())
@@ -6699,6 +6857,14 @@ class StructuredModelDOMRenderer {
     return found;
   }
 
+  bool HasLabeledMetadata(const String& value) const {
+    for (wtf_size_t index = 0; index + 1 < value.length(); ++index) {
+      if (value[index] == ':' && IsPythonWhitespace(value[index + 1]))
+        return true;
+    }
+    return false;
+  }
+
   String ComputeText(Node* node) const {
     String direct = node->hasDirectText()
                         ? Clean(node->getDirectText(String()))
@@ -6711,9 +6877,19 @@ class StructuredModelDOMRenderer {
                          : String();
     if (!direct.empty() &&
         CodePointLength(subtree) > CodePointLength(direct)) {
+      // Direct text omits words inside inline links/spans. For prose and table
+      // cells the subtree is the complete phrase, not unrelated container text.
+      if (IsOneOf(NodeTag(node), {"p", "li", "dd", "dt", "td", "th",
+                                   "caption", "label", "h1", "h2", "h3",
+                                   "h4", "h5", "h6"}))
+        return subtree;
       String direct_key = NormKey(direct);
       if (node->getTruncated() ||
           (!direct_key.empty() && NormKey(subtree).contains(direct_key)))
+        return subtree;
+      // Inline links and spans can leave directText as an incomplete
+      // fragment while subtreeText retains the label/value relationship.
+      if (HasLabeledMetadata(subtree) && !HasLabeledMetadata(direct))
         return subtree;
     }
     if (!direct.empty())
@@ -6740,11 +6916,58 @@ class StructuredModelDOMRenderer {
     return String();
   }
 
+  String AnnotateInlineText(Node* node,
+                            const String& plain,
+                            HashSet<String>* ancestors,
+                            bool ancestor_struck = false) const {
+    if (plain.empty() || ancestors->Contains(node->getRef()))
+      return plain;
+    ancestors->insert(node->getRef());
+    bool struck = false;
+    for (const auto& state : *node->getStates()) {
+      if (state->getName() == "strikethrough" && state->getValue() == "true")
+        struck = true;
+    }
+    StringBuilder value;
+    wtf_size_t cursor = 0;
+    auto children = children_.find(node->getRef());
+    if (children != children_.end()) {
+      for (Node* child : children->value) {
+        String child_text = Clean(child->getSubtreeText(String()));
+        if (child_text.empty())
+          child_text = Clean(child->getDirectText(String()));
+        if (child_text.empty())
+          continue;
+        wtf_size_t start = plain.find(child_text, cursor);
+        // Annotate only text actually retained in this parent's captured
+        // phrase. Do not reconstruct missing text or guess a relationship.
+        if (start == kNotFound)
+          continue;
+        value.Append(plain.substr(cursor, start - cursor));
+        value.Append(AnnotateInlineText(child, child_text, ancestors,
+                                       ancestor_struck || struck));
+        cursor = start + child_text.length();
+      }
+    }
+    value.Append(plain.substr(cursor));
+    ancestors->erase(node->getRef());
+    String result = value.ToString();
+    // Explicit notation keeps the base/exponent relationship in plain text.
+    if (NodeTag(node) == "sup")
+      result = "^{" + result + "}";
+    else if (NodeTag(node) == "sub")
+      result = "_{" + result + "}";
+    if (struck && !ancestor_struck)
+      result = "~~" + result + "~~";
+    return result;
+  }
+
   String Text(Node* node) const {
     auto cached = text_cache_.find(node);
     if (cached != text_cache_.end())
       return cached->value;
-    String value = ComputeText(node);
+    HashSet<String> ancestors;
+    String value = AnnotateInlineText(node, ComputeText(node), &ancestors);
     text_cache_.Set(node, value);
     return value;
   }
@@ -7143,6 +7366,29 @@ class StructuredModelDOMRenderer {
     }
   }
 
+  String ControlStateText(Node* node) const {
+    Vector<String> values;
+    for (const auto& state : *node->getStates()) {
+      String name = Clean(state->getName(), false);
+      String value = Clean(state->getValue());
+      if (!name.empty() && !value.empty())
+        values.push_back(name + "=" + value);
+    }
+    return Join(values, ",");
+  }
+
+  String ActiveControlStateText(Node* node) const {
+    Vector<String> values;
+    for (const auto& state : *node->getStates()) {
+      String name = Clean(state->getName(), false);
+      String value = Clean(state->getValue());
+      if (name.empty() || value.empty() || PythonLower(value) == "false")
+        continue;
+      values.push_back(name + "=" + value);
+    }
+    return Join(values, ",");
+  }
+
   String VisibilityNotes(Node* node) const {
     Vector<String> notes;
     if (!node->getVisible()) notes.push_back("hidden");
@@ -7170,6 +7416,8 @@ class StructuredModelDOMRenderer {
       bits.push_back("actions=" + Join(actions, ","));
     HashMap<String, String> attrs = AttrMap(node);
     if (HasNonEmptyAttribute(attrs, "src") && label.empty()) bits.push_back("src=(image)");
+    String control_state = ControlStateText(node);
+    if (!control_state.empty()) bits.push_back("control_state=" + control_state);
     if (debug) {
       bits.push_back("<" + (node->getTag().empty() ? String("?") : node->getTag()) + ">");
       String role = node->hasRole() ? Clean(node->getRole(String()), false) : String();
@@ -7312,10 +7560,7 @@ class StructuredModelDOMRenderer {
                                       cell->getSemanticBoundary(String()), false))
                                 : String();
           if (!IsOneOf(NodeTag(cell), {"td", "th"}) && semantic != "cell") continue;
-          String raw = cell->hasDirectText() && !cell->getDirectText(String()).empty()
-                           ? cell->getDirectText(String())
-                           : cell->getSubtreeText(String());
-          cells.push_back(Clip(Clean(raw), kMaxCellChars));
+          cells.push_back(Clip(Text(cell), kMaxCellChars));
         }
       }
       bool any = false;
@@ -7366,6 +7611,62 @@ class StructuredModelDOMRenderer {
     return false;
   }
 
+  String MetadataAnchor(const String& text) const {
+    wtf_size_t colon = text.rfind(':');
+    if (colon == kNotFound)
+      return NormKey(text);
+    wtf_size_t start = colon;
+    while (start > 0 && !IsPythonWhitespace(text[start - 1]))
+      --start;
+    return NormKey(text.substr(start));
+  }
+
+  bool HasMoreSpecificMetadataDescendant(Node* node,
+                                         const String& text) const {
+    String anchor = MetadataAnchor(text);
+    String text_key = NormKey(text);
+    if (anchor.empty() || text_key.empty())
+      return false;
+    for (const String& ref : Descendants(node->getRef())) {
+      Node* descendant = FindNode(ref);
+      if (!descendant || descendant == node)
+        continue;
+      String descendant_text = Text(descendant);
+      String descendant_key = NormKey(descendant_text);
+      // A generic wrapper and a leaf child often carry the identical
+      // label/value string. The child is the more specific representation in
+      // both that case and the longer-descendant case, so render only it.
+      if (descendant_key == text_key || descendant_key.contains(anchor))
+        return true;
+      String descendant_direct = descendant->hasDirectText()
+                                     ? Clean(descendant->getDirectText(String()))
+                                     : String();
+      if (descendant_direct.empty() && descendant_text.find(':') != kNotFound &&
+          CodePointLength(descendant_text) >= 24 &&
+          CodePointLength(descendant_text) <= 160) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool IsGenericMetadataNode(Node* node, const String& text) const {
+    String direct = node->hasDirectText()
+                        ? Clean(node->getDirectText(String()))
+                        : String();
+    if (!direct.empty())
+      return false;
+    auto children_it = children_.find(node->getRef());
+    bool leaf = children_it == children_.end() || children_it->value.empty();
+    if (!leaf && text.find(':') == kNotFound)
+      return false;
+    if (leaf && CodePointLength(text) < 24)
+      return false;
+    if (MatchesActionLabel(text) && !ContainsPythonDigit(text))
+      return false;
+    return !HasMoreSpecificMetadataDescendant(node, text);
+  }
+
   bool IsContentNode(Node* node, const HashSet<String>& covered) const {
     String ref = node->getRef();
     if (covered.Contains(ref) || suppressed_refs_.Contains(ref)) return false;
@@ -7388,7 +7689,8 @@ class StructuredModelDOMRenderer {
     if (IsOneOf(tag, {"article", "blockquote", "caption", "dd", "dt", "figcaption", "h1", "h2", "h3", "h4", "h5", "h6", "li", "p", "pre", "summary"}) ||
         IsOneOf(role, {"heading", "paragraph", "listitem", "alertdialog", "dialog"}) || semantic == "listitem") return true;
     String direct = node->hasDirectText() ? Clean(node->getDirectText(String())) : String();
-    if (direct.empty()) return false;
+    if (direct.empty())
+      return IsGenericMetadataNode(node, text);
     return !(CodePointLength(direct) <= kChromeLabelMaxChars &&
              MatchesActionLabel(direct) && !ContainsPythonDigit(text));
   }
@@ -7702,6 +8004,9 @@ class StructuredModelDOMRenderer {
       Vector<String> content_lines = FormatContent(full, prefix, controls);
       for (const String& line : content_lines)
         target.push_back(line);
+      String active_control_state = ActiveControlStateText(node);
+      if (!active_control_state.empty())
+        target.push_back("  control_state=" + active_control_state);
       for (const String& evidence :
            AdditionalContentEvidence(node, content_lines)) {
         target.push_back("  evidence: " + evidence);
@@ -7736,7 +8041,7 @@ class StructuredModelDOMRenderer {
     return lines;
   }
 
-  Vector<String> RenderMedia(const HashSet<String>& covered) const {
+  Vector<String> RenderMedia(const String& rendered_text) const {
     Vector<Node*> ordered = nodes_;
     std::stable_sort(ordered.begin(), ordered.end(), [](Node* a, Node* b) {
       return a->getSourceOrder() < b->getSourceOrder();
@@ -7745,7 +8050,6 @@ class StructuredModelDOMRenderer {
     HashSet<String> seen;
     int count = 0;
     for (Node* node : ordered) {
-      if (covered.Contains(node->getRef())) continue;
       String tag = NodeTag(node);
       if (!IsOneOf(tag, {"img", "picture", "video", "audio", "canvas"})) continue;
       HashMap<String, String> attrs = AttrMap(node);
@@ -7755,15 +8059,11 @@ class StructuredModelDOMRenderer {
         auto it = attrs.find(key); if (it != attrs.end()) label = it->value;
       }
       if (label.empty()) continue;
-      String label_key = NormKey(label);
-      bool represented = false;
-      for (const String& key : rendered_content_text_keys_) {
-        if (!label_key.empty() && (label_key == key || key.contains(label_key) || label_key.contains(key))) {
-          represented = true; break;
-        }
-      }
-      if (represented) continue;
-      String key = tag + ":" + label_key;
+      // Rendering an ancestor does not mean an image's alt text was emitted.
+      // Compare actual output, keeping punctuation significant for equations.
+      if (rendered_text.contains(label) || rendered_text.contains(JsonQuote(label)))
+        continue;
+      String key = tag + ":" + label;
       if (seen.Contains(key)) continue;
       seen.insert(key);
       if (lines.empty()) lines.push_back("=== MEDIA / IMAGE LABELS ===");
@@ -7965,13 +8265,8 @@ StructuredModelDOMRenderer::Render() {
   HashSet<String> rendered;
   Vector<String> content = RenderContent(covered, &rendered);
   append_section("content", content);
-  HashSet<String> media_covered = covered;
-  for (const String& ref : rendered) {
-    media_covered.insert(ref);
-    for (const String& child : Descendants(ref))
-      media_covered.insert(child);
-  }
-  Vector<String> media = RenderMedia(media_covered);
+  Vector<String> media = RenderMedia(Join(tables, "\n") + "\n" +
+                                    Join(content, "\n"));
   append_section("media", media);
   Vector<String> actions = RenderActions(rendered);
   append_section("actions", actions);
