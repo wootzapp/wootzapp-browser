@@ -40,6 +40,7 @@ class CORE_EXPORT InspectorChromiumRLAgent final
   ~InspectorChromiumRLAgent() override;
 
   // InspectorBaseAgent overrides
+  void Dispose() override;
   void Restore() override;
   void DidCommitLoadForLocalFrame(LocalFrame* frame) override;
 

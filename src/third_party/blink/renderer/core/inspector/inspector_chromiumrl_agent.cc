@@ -202,8 +202,12 @@ InspectorChromiumRLAgent::InspectorChromiumRLAgent(InspectedFrames* inspected_fr
   RegisterAgent();
 }
 
-InspectorChromiumRLAgent::~InspectorChromiumRLAgent() {
+InspectorChromiumRLAgent::~InspectorChromiumRLAgent() = default;
+
+void InspectorChromiumRLAgent::Dispose() {
+  // Traced frame/session members are alive here, unlike during GC sweeping.
   UnregisterAgent();
+  InspectorBaseAgent<protocol::ChromiumRL::Metainfo>::Dispose();
 }
 
 void InspectorChromiumRLAgent::RegisterAgent() {
@@ -211,7 +215,12 @@ void InspectorChromiumRLAgent::RegisterAgent() {
 }
 
 void InspectorChromiumRLAgent::UnregisterAgent() {
-  GetAgentMap()->erase(inspected_frames_->Root());
+  LocalFrame* frame = inspected_frames_->Root();
+  DCHECK(frame);
+  auto it = GetAgentMap()->find(frame);
+  // Another DevTools session may have registered the same root frame later.
+  if (it != GetAgentMap()->end() && it->value.Get() == this)
+    GetAgentMap()->erase(it);
 }
 
 InspectorChromiumRLAgent* InspectorChromiumRLAgent::GetAgentForFrame(LocalFrame* frame) {
