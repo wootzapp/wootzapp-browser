@@ -35,6 +35,8 @@
 #include "third_party/blink/renderer/core/frame/web_frame_widget_impl.h"
 #include "third_party/blink/renderer/core/inspector/inspected_frames.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/core/geometry/dom_rect.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/platform/wtf/uuid.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
@@ -106,26 +108,84 @@ String TruncateStructuredString(const String& value,
   return normalized;
 }
 
+// Only extend visible-range extraction to clipped, inline-rich paragraphs.
+// Hidden/padded content, frames, shadow trees and other block types retain
+// their existing capture contract.
+bool IsClippedInlineParagraph(Node* node) {
+  auto* paragraph = DynamicTo<HTMLElement>(node);
+  if (!paragraph || !paragraph->HasTagName(html_names::kPTag) ||
+      node->IsInShadowTree() || !node->GetDocument().GetFrame() ||
+      !node->GetDocument().GetFrame()->IsMainFrame() ||
+      !node->GetDocument().View())
+    return false;
+  const ComputedStyle* style = paragraph->GetComputedStyle();
+  if (!style || style->Visibility() != EVisibility::kVisible ||
+      style->Opacity() == 0 || !style->PaddingTop().IsZero() ||
+      !style->PaddingRight().IsZero() || !style->PaddingBottom().IsZero() ||
+      !style->PaddingLeft().IsZero())
+    return false;
+  DOMRect* bounds = paragraph->GetBoundingClientRect();
+  gfx::Size viewport = node->GetDocument().View()->GetLayoutSize();
+  if (bounds->top() >= 0 && bounds->left() >= 0 &&
+      bounds->bottom() <= viewport.height() &&
+      bounds->right() <= viewport.width())
+    return false;
+  bool has_inline_element = false;
+  for (Node& descendant : NodeTraversal::DescendantsOf(*node)) {
+    if (!descendant.IsElementNode())
+      continue;
+    auto* element = DynamicTo<HTMLElement>(&descendant);
+    const ComputedStyle* child_style =
+        element ? element->GetComputedStyle() : nullptr;
+    LayoutObject* layout = descendant.GetLayoutObject();
+    if (!element || element->GetShadowRoot() || !child_style || !layout ||
+        !layout->IsInline() || layout->IsLayoutReplaced() ||
+        child_style->Visibility() != EVisibility::kVisible ||
+        child_style->Opacity() == 0 ||
+        !child_style->PaddingTop().IsZero() ||
+        !child_style->PaddingRight().IsZero() ||
+        !child_style->PaddingBottom().IsZero() ||
+        !child_style->PaddingLeft().IsZero())
+      return false;
+    has_inline_element = true;
+  }
+  return has_inline_element;
+}
+
 // A long leaf text block can span many viewports. Its first 500 characters
 // are not evidence of the part currently on screen. Use Blink's painted text
 // boxes and DOM offsets instead; this applies to prose, code and JSON alike.
 // Ordinary nodes and non-viewport captures retain their existing extraction.
-bool VisibleLeafText(Node* node, String* result) {
+bool VisibleLeafText(Node* node, String* result, bool* inline_paragraph) {
+  *inline_paragraph = false;
   if (!node->IsElementNode() || node->nodeName() == "HTML" ||
       node->nodeName() == "BODY")
     return false;
+  const bool rich_paragraph = IsClippedInlineParagraph(node);
   unsigned source_length = 0;
-  for (Node* child = node->firstChild(); child; child = child->nextSibling()) {
-    if (child->IsElementNode())
-      return false;
-    if (child->IsTextNode())
-      source_length += child->nodeValue().length();
+  HeapVector<Member<Node>> text_nodes;
+  if (rich_paragraph) {
+    for (Node& descendant : NodeTraversal::DescendantsOf(*node)) {
+      if (descendant.IsTextNode()) {
+        source_length += descendant.nodeValue().length();
+        text_nodes.push_back(&descendant);
+      }
+    }
+  } else {
+    for (Node* child = node->firstChild(); child; child = child->nextSibling()) {
+      if (child->IsElementNode())
+        return false;
+      if (child->IsTextNode()) {
+        source_length += child->nodeValue().length();
+        text_nodes.push_back(child);
+      }
+    }
   }
   if (source_length <= kStructuredMaxSubtreeTextChars)
     return false;
 
   StringBuilder visible;
-  for (Node* child = node->firstChild(); child; child = child->nextSibling()) {
+  for (Node* child : text_nodes) {
     auto* layout = DynamicTo<LayoutText>(child->GetLayoutObject());
     if (!child->IsTextNode() || !layout)
       continue;
@@ -187,6 +247,7 @@ bool VisibleLeafText(Node* node, String* result) {
     }
   }
   *result = visible.ToString();
+  *inline_paragraph = rich_paragraph;
   return true;
 }
 }
@@ -4018,11 +4079,18 @@ protocol::Response InspectorChromiumRLAgent::captureStructuredSnapshot(
         candidate.in_viewport, candidate.hit_testable, candidate.scrollable,
         repeated_group_id, repeated_item_index, text_limit);
     String visible_text;
-    if (!allow_offscreen && VisibleLeafText(node, &visible_text)) {
+    bool inline_paragraph = false;
+    if (!allow_offscreen &&
+        VisibleLeafText(node, &visible_text, &inline_paragraph)) {
       bool truncated = false;
       visible_text = NormalizeTextContent(visible_text);
       page_node->setSubtreeText(
-          TruncateStructuredString(visible_text, text_limit, &truncated));
+          TruncateStructuredString(
+              visible_text,
+              inline_paragraph
+                  ? std::min<unsigned>(kStructuredMaxSubtreeTextChars, text_limit)
+                  : text_limit,
+              &truncated));
       page_node->setDirectText(TruncateStructuredString(
           visible_text, kStructuredMaxDirectTextChars, &truncated));
       // The document is only partially represented even if this viewport fits

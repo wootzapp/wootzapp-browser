@@ -1,12 +1,19 @@
-"""Local target, session, iframe and popup teardown regression checks.
+"""Local browser-only regression checks; no model or benchmark calls.
 
-Browser endpoints must belong to disposable tests.
+Capture the old build with --baseline, then run the new build with --before
+pointing at those artifacts. Browser endpoints must belong to disposable tests.
+
+Visible-range extraction covers clipped inline-rich <p> paragraphs in the main
+document. Other inline-rich blocks keep their first-500-characters behaviour.
+Frame, shadow, hidden and padded-content behaviour is outside this change.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -17,6 +24,20 @@ import aiohttp
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src/third_party/blink/renderer/core/inspector/inspector_chromiumrl_agent.cc"
+FIXTURE = Path(__file__).parent / "fixtures/overlay.html"
+UNCHANGED = (
+    "forms", "tables", "lists", "iframes", "shadow", "hidden", "padded",
+    "short_inline", "long_leaf", "long_div", "complete_paragraph",
+)
+POSITIONS = ("top", "middle", "bottom", "partly_visible")
+
+
+def normalized(value):
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def projection(model):
+    return "\n\n".join("\n".join(s["lines"]) for s in model["sections"]) + "\n"
 
 
 class CDP:
@@ -75,16 +96,26 @@ class CDP:
         await self.evaluate(session, "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
 
     async def page(self, session, name):
-        fixtures = {
-            "forms": '<label>Account <input value="Ada"></label><button>Save</button>',
-            "iframes": '<iframe srcdoc="<p>Child frame</p>"></iframe>',
-        }
         await self.call("Page.navigate", {"url": "about:blank"}, session)
         frame = (await self.call("Page.getFrameTree", session=session))["frameTree"]["frame"]["id"]
         await self.call("Page.setDocumentContent", {
-            "frameId": frame, "html": fixtures[name],
+            "frameId": frame, "html": FIXTURE.read_text().replace("__FIXTURE__", name),
         }, session)
         await self.settle(session)
+        if not await self.evaluate(session, "window.fixtureReady === true"):
+            raise AssertionError("Fixture did not initialize")
+
+    async def capture(self, session, *, offscreen=False, max_text=200000):
+        snapshot = (await self.call("ChromiumRL.captureStructuredSnapshot", {
+            "inViewportOnly": not offscreen, "includeOffscreen": offscreen,
+            "maxNodes": 7000, "maxTextChars": max_text,
+            "includeDiff": False, "updateBaseline": False,
+        }, session))["snapshot"]
+        model = (await self.call("ChromiumRL.getModelDOM", {"snapshot": snapshot}, session))["modelDOM"]
+        screenshot = await self.call("Page.captureScreenshot", {
+            "format": "png", "fromSurface": True, "captureBeyondViewport": False,
+        }, session)
+        return snapshot, model, base64.b64decode(screenshot["data"])
 
 
 class SourceRegressionTests(unittest.TestCase):
@@ -149,24 +180,112 @@ async def teardown_check(cdp, iterations):
 
 
 async def run(args):
-    args.output.mkdir(parents=True, exist_ok=True)
+    output = args.output
+    output.mkdir(parents=True, exist_ok=True)
+    results = {"baseline": args.baseline, "fixtures": [], "u2": [], "errors": []}
     async with CDP(args.cdp_url) as cdp:
-        result = await teardown_check(cdp, args.iterations)
-        if result["passed"] and args.close_browser:
+        results["browser"] = cdp.version
+        target = (await cdp.call("Target.createTarget", {"url": "about:blank"}))["targetId"]
+        session = await cdp.attach(target)
+        await cdp.call("Emulation.setDeviceMetricsOverride", {
+            "width": 1000, "height": 720, "deviceScaleFactor": 1, "mobile": False,
+        }, session)
+
+        async def save(name, offscreen=False, max_text=200000):
+            snapshot, model, png = await cdp.capture(session, offscreen=offscreen, max_text=max_text)
+            text = projection(model)
+            (output / f"{name}.json").write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n")
+            (output / f"{name}.txt").write_text(text)
+            (output / f"{name}.png").write_bytes(png)
+            return snapshot, text, png
+
+        for name in UNCHANGED:
+            await cdp.page(session, name)
+            for position in ([0, 1200] if name in {"long_leaf", "long_div", "hidden", "padded"} else [0]):
+                await cdp.evaluate(session, f"scrollTo(0, {position})")
+                await cdp.settle(session)
+                key = name + f"_{position}"
+                snapshot, text, png = await save(key)
+                row = {"fixture": key, "sha256": hashlib.sha256(text.encode()).hexdigest()}
+                if args.before:
+                    old = (args.before / f"{key}.txt").read_bytes()
+                    row["live_projection_equal"] = old == text.encode()
+                    frozen = json.loads((args.before / f"{key}.json").read_text())
+                    replay = projection((await cdp.call("ChromiumRL.getModelDOM", {"snapshot": frozen}, session))["modelDOM"])
+                    row["frozen_projection_equal"] = old == replay.encode()
+                    if not row["live_projection_equal"] or not row["frozen_projection_equal"]:
+                        results["errors"].append(f"Projection changed: {key}")
+                results["fixtures"].append(row)
+
+        for position in POSITIONS:
+            await cdp.page(session, "inline_paragraph")
+            await cdp.evaluate(session, """(() => {
+              const p = document.querySelector('#rich');
+              const y = {top:p.offsetTop, middle:p.offsetTop+40*24,
+                bottom:p.offsetTop+p.offsetHeight-innerHeight,
+                partly_visible:p.offsetTop-innerHeight+96};
+              scrollTo(0, y['""" + position + """']);
+            })()""")
+            await cdp.settle(session)
+            snapshot, text, png = await save("u2_" + position)
+            expected = await cdp.evaluate(session, """(() => {
+              const p=document.querySelector('#rich'), walker=document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+              const parts=[]; let n;
+              while(n=walker.nextNode()) {
+                let piece='';
+                for(let i=0;i<n.length;i++) {
+                  const r=document.createRange(); r.setStart(n,i);r.setEnd(n,i+1);
+                  const visible=Array.from(r.getClientRects()).some(b=>
+                    b.width>0 && b.height>0 && b.bottom>0 && b.top<innerHeight && b.right>0 && b.left<innerWidth);
+                  if(visible) piece+=n.data[i];
+                }
+                if(piece) parts.push(piece);
+              }
+              return parts.join(' ');
+            })()""")
+            expected = normalized(expected)[:500]
+            paragraph = next(n for n in snapshot["nodes"] if n["tag"] == "p")
+            actual = paragraph.get("subtreeText", "")
+            row = {"position": position, "expected": expected, "actual": actual,
+                   "length": len(actual), "capture_correct": actual == expected,
+                   "projection_contains_visible_text": expected.rstrip() in text}
+            if args.before:
+                row["screenshot_equal"] = (args.before / f"u2_{position}.png").read_bytes() == png
+                if not row["screenshot_equal"]:
+                    results["errors"].append(f"U2 screenshot changed: {position}")
+            results["u2"].append(row)
+            if actual != expected or len(actual) > 500 or expected.rstrip() not in text:
+                results["errors"].append(f"U2 text mismatch: {position}")
+
+        # Offscreen capture keeps the original prefix contract for rich paragraphs.
+        await cdp.page(session, "inline_paragraph")
+        await cdp.evaluate(session, "scrollTo(0, 1960)")
+        await cdp.settle(session)
+        _, text, _ = await save("inline_offscreen", offscreen=True)
+        if args.before and (args.before / "inline_offscreen.txt").read_bytes() != text.encode():
+            results["errors"].append("Non-viewport projection changed")
+
+        results["teardown"] = await teardown_check(cdp, args.iterations)
+        if not results["teardown"]["passed"]:
+            results["errors"].append("Teardown regression failed")
+        elif args.close_browser:
             target = (await cdp.call("Target.createTarget", {"url": "about:blank"}))["targetId"]
             session = await cdp.attach(target)
             await cdp.page(session, "iframes")
             await cdp.call("Browser.close")
-            result["browser_close_accepted"] = True
-    (args.output / "results.json").write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps(result, indent=2))
-    return 0 if result["passed"] else 1
+            results["browser_close_accepted"] = True
+    results["passed"] = not results["errors"]
+    (output / "results.json").write_text(json.dumps(results, indent=2, ensure_ascii=False) + "\n")
+    print(json.dumps({k:v for k,v in results.items() if k not in {"browser", "u2", "fixtures"}}, indent=2))
+    return 0 if results["passed"] else 1
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cdp-url", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--baseline", action="store_true")
+    parser.add_argument("--before", type=Path)
     parser.add_argument("--iterations", type=int, default=30)
     parser.add_argument("--close-browser", action="store_true",
                         help="Finish with Browser.close while a session and iframe are attached")

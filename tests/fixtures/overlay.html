@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ChromiumRL overlay fixture</title>
+<style>
+  html { scroll-behavior: auto; }
+  body { margin: 16px; font: 16px/24px monospace; }
+  table { border-collapse: collapse; }
+  td, th { border: 1px solid; padding: 4px; }
+  p, pre { margin: 0; }
+  .spacer { height: 1000px; }
+  #rich { width: 800px; }
+</style>
+<main id="fixture"></main>
+<script>
+const fixture = "__FIXTURE__";
+const root = document.getElementById("fixture");
+const richLines = Array.from({length: 100}, (_, i) => {
+  const n = String(i).padStart(3, "0");
+  return `<span>ROW_${n} </span><a href="#${n}">link_${n}</a> ` +
+      `<em>em_${n}</em> <code>code_${n}</code> end_${n}<br>`;
+}).join("");
+const cases = {
+  forms: '<h1>Form</h1><label>Account <input value="Ada"></label>' +
+      '<label><input type="checkbox" checked> Enabled</label>' +
+      '<select><option>Basic</option><option selected>Advanced</option></select>' +
+      '<button>Save</button><input disabled placeholder="Unavailable">',
+  tables: '<h1>Measurements</h1><table><tr><th>Name</th><th>Value</th></tr>' +
+      '<tr><td>Speed</td><td>3 × 10<sup>8</sup> m s<sup>−1</sup></td></tr>' +
+      '<tr><td>Index</td><td>a<sub>n</sub></td></tr></table>',
+  lists: '<h1>Records</h1><ul><li>Item A: <a href="#a">Available</a></li>' +
+      '<li>Item B: <a href="#b">Available</a></li><li>Item C: None</li></ul>',
+  iframes: '<h1>Frame boundary</h1><iframe title="Child" id="frame"></iframe>' +
+      '<p>Outer document text.</p>',
+  shadow: '<h1>Shadow boundary</h1><div id="host"></div><p>Light DOM text.</p>',
+  hidden: '<h1>Visibility</h1><p>Visible <span hidden>HIDDEN_VALUE</span> end.</p>' +
+      '<div style="opacity:0">OPACITY_ZERO_VALUE</div>' +
+      '<p>' + richLines.replaceAll('ROW_', 'HIDDEN_ROW_') +
+      '<span hidden>Do not change this hidden-content contract.</span></p>',
+  padded: '<h1>Padding</h1><p style="padding-top:900px">' + richLines + '</p>',
+  short_inline: '<p>From <a href="#a">Middle English</a> to ' +
+      '<em>Medieval Latin</em> with <code>exact_code</code>.</p>',
+  long_leaf: '<pre>' + Array.from({length:150}, (_, i) =>
+      `leaf_${String(i).padStart(3, "0")}: exact value ${i * 7}`).join('\n') + '</pre>',
+  long_div: '<div>' + richLines + '</div>',
+  complete_paragraph: '<p>' + richLines.slice(0, richLines.indexOf('ROW_015')) + '</p>',
+  inline_paragraph: '<div class="spacer"></div><p id="rich">' + richLines +
+      '</p><div class="spacer"></div>',
+};
+root.innerHTML = cases[fixture];
+if (fixture === "iframes") {
+  document.querySelector('iframe').srcdoc = '<p>' + richLines + '</p>';
+}
+if (fixture === "shadow") {
+  document.querySelector('#host').attachShadow({mode:'open'}).innerHTML =
+      '<p>' + richLines + '</p>';
+}
+window.fixtureReady = true;
+</script>
